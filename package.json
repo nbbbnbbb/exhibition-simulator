@@ -1,0 +1,27 @@
+{
+  "name": "ma-exhibition-planner",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node scripts/serve.mjs",
+    "stop": "node scripts/stop.mjs",
+    "dev": "vite --host 127.0.0.1",
+    "dev:lan": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "node --test tests/domain.test.mjs",
+    "test:e2e": "node scripts/browser-test.mjs"
+  },
+  "dependencies": {
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "three": "0.187.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "6.2.1",
+    "playwright": "1.64.1",
+    "prettier": "3.9.10",
+    "vite": "8.3.5"
+  }
+}

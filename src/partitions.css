@@ -1,0 +1,244 @@
+.sidebar-tabs {
+  gap: 12px;
+}
+.sidebar-tabs > button {
+  font-size: 10px;
+  gap: 5px;
+}
+.partitions-library {
+  padding: 20px 18px;
+  overflow: auto;
+  flex: 1;
+}
+.partitions-library > .select-label {
+  margin-top: 17px;
+}
+.partitions-library > .button {
+  margin: 12px 0 18px;
+}
+.partitions-library > .check-label {
+  font-size: 10px;
+}
+.rail-edit-link {
+  font-size: 10px;
+  color: #77915f;
+  padding: 14px 0;
+  margin-bottom: 4px;
+}
+.partition-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  border: 1px solid #d7dfcb;
+  border-radius: 5px;
+  background: #fafbf5;
+  padding: 0 12px 13px;
+  margin: 8px 0 12px;
+  gap: 5px;
+  text-align: left;
+}
+.partition-card.selected {
+  border-color: #9cb28b;
+  box-shadow: 0 0 0 1px #d0ddc4;
+}
+.partition-card strong {
+  font-size: 11px;
+  font-weight: 500;
+}
+.partition-card > span {
+  font-size: 9px;
+  color: #8a997b;
+}
+.partition-card > small {
+  font-size: 8px;
+  color: #a2ad95;
+}
+.partition-symbol {
+  height: 78px;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 3px;
+}
+.partition-symbol > svg {
+  width: 130px;
+  height: 65px;
+}
+.partition-summary {
+  padding: 20px 19px;
+  border-bottom: 1px solid #dddfd5;
+}
+.partition-summary > input {
+  display: block;
+  border: 0;
+  border-bottom: 1px solid #d8e0cc;
+  background: transparent;
+  width: 100%;
+  font-size: 13px;
+  margin: 9px 0 8px;
+  padding: 5px 0;
+}
+.partition-summary > p {
+  font-size: 10px;
+  color: #9ba88c;
+}
+.partition-faces {
+  margin-bottom: 12px;
+}
+.partition-faces > button {
+  flex: 1;
+}
+.plan-partition {
+  cursor: grab;
+}
+.plan-partition:active {
+  cursor: grabbing;
+}
+.ghost-part {
+  pointer-events: none;
+}
+.rail-editor-list {
+  max-height: 52vh;
+  overflow: auto;
+  margin-top: 15px;
+  padding-right: 10px;
+}
+.rail-editor-row {
+  border: 1px solid #dbe2d0;
+  border-radius: 5px;
+  margin-bottom: 12px;
+  padding: 10px 14px 14px;
+}
+.rail-row-heading {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+.rail-row-heading > input {
+  flex: 1;
+  border: 0;
+  border-bottom: 1px solid #dce4d2;
+  background: transparent;
+  font-size: 11px;
+  padding: 5px 0;
+}
+.rail-row-heading > .source-tag {
+  font-size: 8px;
+  max-width: 240px;
+}
+.rail-coordinates {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+}
+.rail-coordinates .number-field > span {
+  font-size: 9px;
+}
+.rail-coordinates .number-field > div {
+  height: 31px;
+}
+.rail-coordinates .number-field input {
+  font-size: 11px;
+}
+@media (max-width: 1200px) {
+  .sidebar-tabs {
+    gap: 9px;
+    padding: 0 12px;
+  }
+  .sidebar-tabs > button {
+    font-size: 9px;
+    gap: 4px;
+  }
+  .partitions-library {
+    padding: 18px 13px;
+  }
+}
+@media (max-width: 1000px) {
+  .sidebar-tabs {
+    gap: 8px;
+    padding: 0 10px;
+  }
+  .sidebar-tabs > button {
+    font-size: 8px;
+    gap: 3px;
+  }
+  .sidebar-tabs small {
+    padding: 1px 4px;
+  }
+}
+@media (max-width: 800px) {
+  .rail-coordinates {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .rail-row-heading {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .rail-row-heading > input {
+    flex-basis: 70%;
+  }
+  .rail-row-heading > .source-tag {
+    order: 3;
+  }
+  .partition-summary {
+    padding: 20px;
+  }
+  .rail-editor-row {
+    padding: 10px;
+  }
+  .partitions-library > .muted {
+    font-size: 10px;
+  }
+}
+@media (max-width: 480px) {
+  .sidebar-tabs {
+    gap: 6px;
+    padding: 0 6px;
+  }
+  .sidebar-tabs > button {
+    font-size: 8px;
+    gap: 2px;
+  }
+  .sidebar-tabs small {
+    padding: 1px 3px;
+    font-size: 8px;
+  }
+  .partitions-library {
+    padding: 14px 8px;
+  }
+  .partitions-library > .muted {
+    font-size: 8px;
+  }
+  .partitions-library .button {
+    font-size: 9px;
+    padding: 7px 5px;
+  }
+  .partitions-library .select-label {
+    font-size: 9px;
+  }
+  .partitions-library select {
+    font-size: 9px;
+    padding: 7px 4px;
+  }
+  .partitions-library > .check-label {
+    font-size: 8px;
+  }
+  .rail-edit-link {
+    font-size: 8px;
+  }
+  .partition-card {
+    padding: 0 8px 10px;
+  }
+  .partition-card > span {
+    font-size: 7px;
+  }
+  .partition-symbol {
+    height: 63px;
+  }
+  .partition-symbol > svg {
+    width: 110px;
+    height: 55px;
+  }
+}
