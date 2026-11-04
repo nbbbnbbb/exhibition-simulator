@@ -28,7 +28,7 @@ const assert = (value, message) => {
 };
 await fs.mkdir('test-results', { recursive: true });
 try {
-  await page.goto('http://127.0.0.1:5173', { waitUntil: 'networkidle' });
+  await page.goto(process.env.APP_URL || 'http://127.0.0.1:5173', { waitUntil: 'networkidle' });
   await page.getByRole('heading', { name: '展示を、空間で考える。' }).waitFor();
   await page.getByText('保存済み', { exact: false }).first().waitFor();
   assert((await page.locator('canvas').count()) === 1, '3D canvas missing');
@@ -61,6 +61,7 @@ try {
     }
   });
   await page.reload({ waitUntil: 'networkidle' });
+  await page.getByText('保存済み', { exact: false }).first().waitFor();
   await page.locator('.plan-art').first().locator('line').last().click({ force: true });
   await page.getByTestId('position-s').waitFor();
   await page.waitForFunction(

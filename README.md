@@ -1,6 +1,24 @@
 # 間 MA — 展覧会プランナー
 
-添付の「1/100」表記の建築図面と室内写真2枚に基づく、ローカルで動く3D・平面・WebXR展示計画アプリです。React 19 / Three.js / Vite 8。建築形状・作品配置を同じmm単位データから生成し、3Dと平面が一致する構成です。
+添付の「1/100」表記の建築図面と室内写真2枚に基づく、ブラウザーで動く3D・平面・WebXR展示計画アプリです。React 19 / Three.js / Vite 8。建築形状・作品配置を同じmm単位データから生成し、3Dと平面が一致する構成です。
+
+## 公開版（GitHub Pages）
+
+**[シミュレーターを開く](https://nbbbnbbb.github.io/exhibition-simulator/)** — インストールやローカルサーバーの起動は不要です。
+
+作品・画像・プランは、利用しているブラウザーのIndexedDBに保存されます。URLを共有しても編集内容は共有されません。ローカル版で作ったプランは「書き出す」でJSONを保存し、公開版の「開く」で読み込んでください。別の端末・ブラウザーへの移行もJSONを使います。
+
+`.github/workflows/pages.yml` がプルリクエストでテスト・ビルドを行い、`main` への反映後にGitHub Pagesへ自動公開します。公開設定はリポジトリの Settings → Pages → Source を **GitHub Actions** にします。ソースコードと同梱資料も公開リポジトリから閲覧できます。
+
+通常のローカルビルドは `/`、Actionsのビルドは `VITE_BASE_PATH=/exhibition-simulator/` を使います。画像・図面もこのパスに追従します。公開版と同じ構成を手元で確認する場合：
+
+```powershell
+$env:VITE_BASE_PATH = '/exhibition-simulator/'
+npm run build
+Remove-Item Env:VITE_BASE_PATH
+npm run preview
+# http://127.0.0.1:4173/exhibition-simulator/ を開く
+```
 
 ## 起動
 
@@ -90,7 +108,7 @@ npm run preview
 Three.jsのWebXRを利用し、`local-floor` 基準、リグの拡縮なしで **1 m = 実空間1 m** としています。
 
 - PC接続HMD：対応するOpenXRランタイム・WebXR対応ブラウザーから、localhost / 127.0.0.1で開きます。
-- Quest等の単体HMD：アプリをHTTPSで配信してヘッドセットの対応ブラウザーから開きます。ビルド済み `dist/` をHTTPS静的ホストへ置けます。**この開発では外部公開していません。** LANのHTTPだけでは通常WebXRを開始できません。
+- Quest等の単体HMD：上記のGitHub Pages公開URLをヘッドセットの対応ブラウザーから開きます。HTTPSで配信します。LANのHTTPだけでは通常WebXRを開始できません。
 - トリガーを押して床へ向け、離すとテレポート。左スティックで前後、右スティックで30°旋回。床・柱との判定を使用。
 - HMDのトラッキングが実際の目線高さを決めます。右の「目線高さ」は通常の歩行モード用です。
 - **実機HMDの装着、VRでの操作感・1:1寸法の体感検証は未実施**です。対応APIがないPCでの案内表示は検証済みです。
