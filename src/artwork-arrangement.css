@@ -1,0 +1,57 @@
+.alignment-buttons {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+}
+.alignment-buttons .button {
+  padding: 7px 2px;
+  font-size: 10px;
+}
+.artwork-arrangement .arrangement-heading {
+  margin-top: 20px;
+}
+.arrangement-axis {
+  display: flex;
+  gap: 5px;
+  margin-bottom: 8px;
+}
+.arrangement-axis .button {
+  flex: 1;
+}
+.arrangement-axis .button[aria-pressed='true'] {
+  background: #e7ecdf;
+  border-color: #8c9b7e;
+  color: #43533a;
+}
+.arrangement-grid {
+  margin-top: 16px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+.arrangement-grid summary {
+  cursor: pointer;
+  font-size: 11px;
+  margin-bottom: 12px;
+}
+.arrangement-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 10px;
+}
+.arrangement-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  font-size: 10px;
+  color: #7a8273;
+  padding-top: 8px;
+}
+.arrangement-rows strong {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+}
+.arrangement-rows small {
+  font-size: 10px;
+  font-weight: 400;
+}

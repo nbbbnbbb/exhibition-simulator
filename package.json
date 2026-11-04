@@ -10,7 +10,9 @@
     "dev:lan": "vite --host 0.0.0.0",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
-    "test": "node --test tests/domain.test.mjs",
+    "test": "node --test tests/domain.test.mjs tests/lighting.test.mjs tests/catalog.test.mjs tests/partition-lighting.test.mjs tests/architecture.test.mjs tests/artwork-placement.test.mjs tests/artwork-arrangement.test.mjs tests/steel-frames.test.mjs",
+    "test:steel": "node scripts/steel-frames-test.mjs",
+    "test:lighting": "node scripts/lighting-test.mjs",
     "test:e2e": "node scripts/browser-test.mjs"
   },
   "dependencies": {

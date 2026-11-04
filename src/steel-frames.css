@@ -1,0 +1,123 @@
+.sidebar-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding-inline: 8px;
+  gap: 4px;
+}
+.sidebar-tabs > button {
+  gap: 3px;
+  padding-inline: 2px;
+  justify-content: center;
+  white-space: nowrap;
+}
+.sidebar-tabs small {
+  padding-inline: 3px;
+}
+.steel-library {
+  padding: 20px 18px;
+  overflow: auto;
+  flex: 1;
+}
+.steel-library > .select-label,
+.steel-inspector .select-label + .select-label {
+  margin-top: 16px;
+}
+.steel-library > .button {
+  margin-bottom: 10px;
+}
+.steel-library > .field-note {
+  margin: 10px 0 18px;
+}
+.frame-preview {
+  display: block;
+  width: 100%;
+  height: 135px;
+  color: #748e94;
+  margin: 8px 0;
+}
+.steel-frame-card {
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  width: 100%;
+  gap: 6px;
+  border: 1px solid #d4dddb;
+  border-radius: 5px;
+  padding: 15px 12px;
+  margin-bottom: 10px;
+  background: #f7f9f6;
+}
+.steel-frame-card.selected {
+  border-color: #b68b53;
+  box-shadow: 0 0 0 1px #ddc5a5;
+}
+.steel-frame-card span,
+.steel-frame-card small {
+  color: #7b8984;
+  font-size: 10px;
+}
+.section-preview {
+  width: 100%;
+  height: 80px;
+  margin: 8px 0;
+}
+.membrane-faces {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 18px 0;
+}
+.membrane-color {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 16px 0;
+}
+.membrane-color input {
+  width: 55px;
+  height: 30px;
+  padding: 2px;
+  border: 1px solid var(--line);
+}
+.frame-shape-editor {
+  padding-top: 10px;
+}
+.frame-shape-editor .select-label {
+  margin: 12px 0;
+}
+.frame-shape-editor input,
+.frame-shape-editor textarea {
+  border: 1px solid var(--line);
+  background: #fcfcf8;
+  padding: 9px;
+  border-radius: 4px;
+  width: 100%;
+}
+.frame-editor-grid {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr 1fr;
+  gap: 14px;
+  margin-top: 20px;
+}
+.frame-editor-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.frame-shape-editor textarea {
+  resize: vertical;
+  font-family: monospace;
+  line-height: 1.7;
+}
+.frame-error {
+  color: #b24735;
+  margin: 12px 0;
+}
+.plan-steel-frame {
+  cursor: move;
+}
+@media (max-width: 700px) {
+  .frame-editor-grid {
+    grid-template-columns: 1fr;
+  }
+}

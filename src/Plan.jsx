@@ -1,39 +1,142 @@
-import { useRef } from 'react';
-import { walls, polygon, fitPlacement, format, fitPartition, partitionGeometry } from './domain.js';
+import { useRef, useEffect } from 'react';
+import { walls, polygon, format, fitPartition, partitionGeometry } from './domain.js';
+import { previewPlacement, previewMove, pickPlanWall } from './artworkPlacement.js';
+import { artworkLabelRows } from './artworkLabels.js';
+import { frameGeometry, validateFrame } from './steelFrames.js';
 export default function Plan({
   project,
   selected,
   compare,
   onSelect,
-  onMove,
+  onMoveGroup,
   camera,
   showDimensions = true,
   mini = false,
   selectedPartition,
   onSelectPartition,
   onPartitionMove,
+  selectedSteelFrame,
+  onSelectSteelFrame,
+  onSteelFrameMove,
   showRails = false,
+  placingArtworkId,
+  movingPlacementId,
+  movingPlacementIds = [],
+  onMoveStart,
+  onMoveEnd,
+  onNotice,
+  placementPreview,
+  onPreview,
+  onPlace,
+  labelSettings,
 }) {
   const svg = useRef();
   const drag = useRef();
+  const steelDrag = useRef();
   const b = project.building,
     layout = project.layouts.find((l) => l.id === project.activeLayoutId),
     ws = walls(b, layout.partitions, project.rails);
   const x = b.mainWidth - b.overallWidth;
   const pad = mini ? 1300 : 3300;
   const sw = mini ? 150 : 70;
+  useEffect(() => {
+    const cancel = () => {
+      if (steelDrag.current) {
+        steelDrag.current.element.removeAttribute('transform');
+        steelDrag.current = null;
+      }
+      if (drag.current && drag.current.type !== 'partition') {
+        drag.current = null;
+        onMoveEnd?.();
+      }
+    };
+    const key = (event) => {
+      if (event.code === 'Escape') cancel();
+    };
+    window.addEventListener('keydown', key);
+    window.addEventListener('blur', cancel);
+    return () => {
+      window.removeEventListener('keydown', key);
+      window.removeEventListener('blur', cancel);
+    };
+  }, [onMoveEnd]);
   const point = (e) => {
     const p = svg.current.createSVGPoint();
     p.x = e.clientX;
     p.y = e.clientY;
     return p.matrixTransform(svg.current.getScreenCTM().inverse());
   };
+  const pointerPreview = (e) => {
+    const d = drag.current,
+      moving = d && d.type !== 'partition';
+    if (mini || (!placingArtworkId && !moving)) return null;
+    const pos = point(e),
+      scale = svg.current.getScreenCTM();
+    const tolerance = 20 / Math.hypot(scale.a, scale.b);
+    const r = svg.current.getBoundingClientRect();
+    const inside =
+      e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+    const nearest = inside && pickPlanWall(project, { x: pos.x, z: pos.y }, tolerance);
+    const art = project.artworks.find((a) => a.id === (moving ? d.p.artworkId : placingArtworkId));
+    const result =
+      nearest?.wall.hangable && art
+        ? moving
+          ? previewMove(
+              project,
+              d.p.id,
+              {
+                wallId: nearest.wall.id,
+                s:
+                  Math.round(
+                    (nearest.s -
+                      d.grabX *
+                        (nearest.wall.normal.z * nearest.wall.tangent.x -
+                          nearest.wall.normal.x * nearest.wall.tangent.z)) /
+                      (e.altKey ? 1 : 10),
+                  ) * (e.altKey ? 1 : 10),
+                bottom: d.p.bottom,
+              },
+              d.ids,
+            )
+          : previewPlacement(project, art.id, {
+              id: 'preview',
+              wallId: nearest.wall.id,
+              s: Math.round(nearest.s),
+              bottom: Math.max(0, Math.round(1500 - art.height / 2)),
+            })
+        : {
+            placement: null,
+            valid: false,
+            message: nearest ? 'ガラス面には配置できません' : '平面図の壁面を指してください',
+          };
+    result.source = 'plan';
+    if (moving) d.preview = result;
+    onPreview?.(result);
+    return result;
+  };
   const down = (e, p) => {
+    if (e.button !== 0) return;
     e.stopPropagation();
-    onSelect(p.id, e.shiftKey || e.ctrlKey || e.metaKey);
-    if (mini) return;
+    const multi = e.shiftKey || e.ctrlKey || e.metaKey;
+    if (mini || multi) {
+      onSelect(p.id, multi);
+      return;
+    }
+    const ids = selected.includes(p.id) ? [...selected] : [p.id];
+    if (!selected.includes(p.id)) onSelect(p.id);
     const w = ws.find((w) => w.id === p.wallId);
-    drag.current = { p, w, start: point(e) };
+    const start = point(e);
+    drag.current = {
+      p,
+      ids,
+      w,
+      start,
+      startClient: { x: e.clientX, y: e.clientY },
+      grabX:
+        ((start.x - w.start.x) * w.tangent.x + (start.y - w.start.z) * w.tangent.z - p.s) *
+        (w.normal.z * w.tangent.x - w.normal.x * w.tangent.z),
+      started: false,
+    };
     e.currentTarget.setPointerCapture(e.pointerId);
   };
   const downPart = (e, p) => {
@@ -48,22 +151,56 @@ export default function Plan({
     };
     e.currentTarget.setPointerCapture(e.pointerId);
   };
+  const steelDown = (e, f) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    onSelectSteelFrame?.(f.id);
+    if (mini) return;
+    steelDrag.current = { f, start: point(e), element: e.currentTarget };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const steelMove = (e) => {
+    const d = steelDrag.current;
+    if (!d) return;
+    e.stopPropagation();
+    const pos = point(e),
+      step = e.altKey ? 1 : 10;
+    const next = {
+      ...d.f,
+      x: Math.round((d.f.x + pos.x - d.start.x) / step) * step,
+      z: Math.round((d.f.z + pos.y - d.start.y) / step) * step,
+    };
+    try {
+      validateFrame(next, project);
+      d.next = next;
+      d.element.setAttribute('transform', `translate(${next.x - d.f.x},${next.z - d.f.z})`);
+    } catch {}
+  };
+  const steelUp = (e) => {
+    const d = steelDrag.current;
+    steelDrag.current = null;
+    if (!d) return;
+    e.stopPropagation();
+    d.element.removeAttribute('transform');
+    if (e.type === 'pointerup' && d.next && (d.next.x !== d.f.x || d.next.z !== d.f.z))
+      onSteelFrameMove?.(d.f.id, { x: d.next.x, z: d.next.z });
+  };
   const move = (e) => {
     const d = drag.current;
     if (!d) return;
+    if (d.type !== 'partition') {
+      if (!d.started) {
+        if (Math.hypot(e.clientX - d.startClient.x, e.clientY - d.startClient.y) < 3) return;
+        d.started = true;
+        onMoveStart?.(d.p.id, d.ids);
+      }
+      pointerPreview(e);
+      return;
+    }
     const pos = point(e);
     const ds = (pos.x - d.start.x) * d.w.tangent.x + (pos.y - d.start.y) * d.w.tangent.z;
     try {
-      d.next =
-        d.type === 'partition'
-          ? fitPartition({ ...d.p, s: Math.round((d.p.s + ds) / 10) * 10 }, b, project.rails)
-          : fitPlacement(
-              { ...d.p, s: Math.round((d.p.s + ds) / 10) * 10 },
-              project.artworks.find((a) => a.id === d.p.artworkId),
-              b,
-              layout.partitions,
-              project.rails,
-            );
+      d.next = fitPartition({ ...d.p, s: Math.round((d.p.s + ds) / 10) * 10 }, b, project.rails);
     } catch {
       return;
     }
@@ -78,13 +215,25 @@ export default function Plan({
   };
   const up = (e) => {
     const d = drag.current;
+    if (d && d.type !== 'partition' && d.started && e.type === 'pointerup') pointerPreview(e);
     drag.current = null;
     e.currentTarget.removeAttribute('transform');
     if (d?.type === 'partition')
       svg.current
         .querySelectorAll('[data-partition-owner]')
         .forEach((el) => el.removeAttribute('transform'));
-    if (d?.next) (d.type === 'partition' ? onPartitionMove : onMove)(d.p.id, d.next);
+    if (d && d.type !== 'partition') {
+      if (d.started && e.type === 'pointerup') {
+        const p = d.preview?.placement;
+        if (
+          d.preview?.valid &&
+          (p.wallId !== d.p.wallId || p.s !== d.p.s || p.bottom !== d.p.bottom)
+        )
+          onMoveGroup(d.p.id, p, d.ids);
+        else if (!d.preview?.valid) onNotice?.(d.preview?.message || '移動を取り消しました');
+      }
+      onMoveEnd?.();
+    } else if (d?.next && e.type === 'pointerup') onPartitionMove(d.p.id, d.next);
   };
   const label = (tx, tz, text, rotate = 0) => (
     <text
@@ -107,13 +256,16 @@ export default function Plan({
     const selectedArt = selected.includes(p.id);
     return (
       <g
+        data-placement-id={ghost ? undefined : p.id}
         data-partition-owner={ghost ? undefined : w.partitionId}
         key={(ghost ? 'g' : '') + p.id}
         className={ghost ? 'ghost-art' : 'plan-art'}
+        opacity={!ghost && movingPlacementIds.includes(p.id) ? 0.15 : undefined}
         onPointerDown={ghost ? undefined : (e) => down(e, p)}
         onPointerMove={move}
         onPointerUp={up}
         onPointerCancel={up}
+        onLostPointerCapture={up}
       >
         <line
           x1={px - (w.tangent.x * a.width) / 2 + (w.normal.x * thick) / 2}
@@ -137,6 +289,27 @@ export default function Plan({
               {a.title} · 中心 {format(p.s)} mm · 下端 {format(p.bottom)} mm
             </title>
           </line>
+        )}
+        {!ghost && !mini && labelSettings?.enabled && (
+          <text
+            className="plan-artwork-label"
+            data-artwork-label={p.id}
+            x={px + w.normal.x * 1100}
+            y={pz + w.normal.z * 1100}
+            textAnchor={w.normal.x < 0 ? 'end' : 'start'}
+          >
+            {artworkLabelRows(a, labelSettings).map((row, index) => (
+              <tspan
+                key={row.key}
+                data-label-field={row.key}
+                x={px + w.normal.x * 1100}
+                dy={index ? 480 : 0}
+              >
+                {`${row.key === 'title' ? '' : row.label + '：'}${row.value}`.slice(0, 80)}
+                {row.value.length > 80 ? '…' : ''}
+              </tspan>
+            ))}
+          </text>
         )}
       </g>
     );
@@ -188,8 +361,64 @@ export default function Plan({
       </g>
     );
   };
+  const steel = (f, ghost = false) => {
+    const { shape, nodes } = frameGeometry(f, project),
+      color = ghost ? '#ab7cba' : selectedSteelFrame === f.id ? '#b68246' : '#637e88';
+    return (
+      <g
+        key={`${ghost ? 'ghost-' : ''}${f.id}`}
+        className="plan-steel-frame"
+        data-steel-frame-id={ghost ? undefined : f.id}
+        onPointerDown={ghost ? undefined : (e) => steelDown(e, f)}
+        onPointerMove={steelMove}
+        onPointerUp={steelUp}
+        onPointerCancel={steelUp}
+        onLostPointerCapture={steelUp}
+      >
+        <title>
+          {f.name} · {format(f.width)} × {format(f.height)} mm
+        </title>
+        {!ghost &&
+          f.membrane.faces.map((index) => (
+            <polygon
+              key={`face-${index}`}
+              points={shape.faces[index].nodes
+                .map((i) => `${nodes[i][0]},${nodes[i][2]}`)
+                .join(' ')}
+              fill={f.membrane.color}
+              fillOpacity={f.membrane.opacity}
+              stroke="none"
+            />
+          ))}
+        {shape.members.map(([a, b], i) => (
+          <g key={i}>
+            <line
+              x1={nodes[a][0]}
+              y1={nodes[a][2]}
+              x2={nodes[b][0]}
+              y2={nodes[b][2]}
+              stroke={color}
+              strokeWidth={mini ? 110 : 65}
+              strokeDasharray={ghost ? '180 100' : undefined}
+            />
+            {!ghost && (
+              <line
+                x1={nodes[a][0]}
+                y1={nodes[a][2]}
+                x2={nodes[b][0]}
+                y2={nodes[b][2]}
+                stroke="transparent"
+                strokeWidth={mini ? 500 : 380}
+              />
+            )}
+          </g>
+        ))}
+      </g>
+    );
+  };
   return (
     <svg
+      data-placing={String(!!(placingArtworkId || movingPlacementId) && !mini)}
       data-camera-x={camera?.x}
       data-camera-z={camera?.z}
       ref={svg}
@@ -197,6 +426,21 @@ export default function Plan({
       viewBox={`${x - pad} ${-pad} ${b.overallWidth + 2 * pad} ${b.length + 2 * pad}`}
       role="img"
       aria-label={mini ? '現在地ミニマップ' : '寸法付き展示平面図'}
+      onPointerMoveCapture={(e) => {
+        if (!placingArtworkId || mini) return;
+        e.stopPropagation();
+        pointerPreview(e);
+      }}
+      onPointerDownCapture={(e) => {
+        if (!placingArtworkId || mini || e.button !== 0) return;
+        e.stopPropagation();
+        e.preventDefault();
+        const result = pointerPreview(e);
+        if (result?.valid) onPlace?.(result.placement);
+      }}
+      onPointerLeave={() => {
+        if (placingArtworkId && !mini) onPreview?.(null);
+      }}
       onPointerDown={(e) => {
         if (e.target === svg.current) onSelect(null);
       }}
@@ -231,6 +475,7 @@ export default function Plan({
         !mini &&
         project.rails.map((r) => (
           <line
+            className="partition-floor-line"
             key={r.id}
             x1={r.x1}
             y1={r.z1}
@@ -284,8 +529,37 @@ export default function Plan({
       )}
       {compare?.partitions.map((p) => part(p, true))}
       {layout.partitions.map((p) => part(p))}
+      {compare?.steelFrames?.map((f) => steel(f, true))}
+      {layout.steelFrames?.map((f) => steel(f))}
       {compare?.placements.map((p) => art(p, true))}
       {layout.placements.map((p) => art(p))}
+      {!mini &&
+        (
+          placementPreview?.placements ||
+          (placementPreview?.placement ? [placementPreview.placement] : [])
+        ).map((p) => {
+          const a = project.artworks.find((a) => a.id === p.artworkId),
+            w = ws.find((w) => w.id === p.wallId);
+          if (!a || !w) return null;
+          const x = w.start.x + w.tangent.x * p.s + w.normal.x * 140,
+            z = w.start.z + w.tangent.z * p.s + w.normal.z * 140;
+          return (
+            <line
+              key={p.id}
+              data-preview-placement-id={p.id}
+              data-preview-bottom={p.bottom}
+              className="plan-placement-preview"
+              pointerEvents="none"
+              x1={x - (w.tangent.x * a.width) / 2}
+              y1={z - (w.tangent.z * a.width) / 2}
+              x2={x + (w.tangent.x * a.width) / 2}
+              y2={z + (w.tangent.z * a.width) / 2}
+              stroke={placementPreview.valid ? '#468950' : '#d14935'}
+              strokeWidth="280"
+              strokeDasharray="160 80"
+            />
+          );
+        })}
       {camera && (
         <g>
           <circle
@@ -315,7 +589,7 @@ export default function Plan({
             stroke="#79866e"
             strokeWidth="45"
           />
-          {label(x - 1400, 3000, '図面上端')}
+          {label(x - 1400, 3000, '真北 / N')}
         </g>
       )}
     </svg>

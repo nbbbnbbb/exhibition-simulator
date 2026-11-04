@@ -71,10 +71,11 @@ export function PartitionLibrary({
       <label className="check-label">
         <input
           type="checkbox"
+          aria-label="可動壁の床ライン"
           checked={showRails}
           onChange={(e) => onShowRails(e.target.checked)}
         />
-        配置ラインを表示
+        可動壁の床ライン
       </label>
       <button className="rail-edit-link" onClick={onEditRails}>
         配置ラインの座標を編集 →

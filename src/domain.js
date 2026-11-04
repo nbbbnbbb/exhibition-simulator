@@ -1,4 +1,15 @@
-// All project data is in integer millimetres. Only renderers convert mm to metres.
+// Building and artwork dimensions use integer millimetres. Lighting uses lx, K and degrees.
+import { lightingDefaults, validateLighting } from './lighting.js';
+import { createRails } from './architecture.js';
+import { validateSteelProject } from './steelFrames.js';
+import { DEFAULT_LABELS, LABEL_FIELDS } from './artworkLabels.js';
+import {
+  addSuppliedArtworks,
+  placementProblem,
+  validateArtworkMetadata,
+  quantityLimit,
+  placedCount,
+} from './catalog.js';
 export const SCHEMA_VERSION = 1;
 export const uid = () => crypto.randomUUID();
 export const mm = (n) => Math.round(Number(n));
@@ -62,7 +73,7 @@ export const DIMENSIONS = [
     label: '梁せい / 梁幅 / 間隔',
     source: '推定',
     value: '500 / 300 / 2,650 mm',
-    note: '写真のコンクリート梁と鉄骨補強を簡略再現。各梁位置は未実測。',
+    note: 'レール付き梁の中心線は可動壁ラインに一致。2,650 mmはコンクリートのみの中間梁を配置する目安。断面・高さ・照明レールの取付詳細は写真からの推定。',
   },
   {
     key: 'mezzanineHeight',
@@ -165,77 +176,7 @@ export function walls(b, partitions = [], rails = []) {
     });
   return [...fixed, ...partitions.flatMap((p) => partitionFaces(p, rails))];
 }
-export function createRails(b) {
-  // Dimensionless line ratios approximate the dotted layout, NOT a 1:100 PDF scale.
-  const zs = [0.119, 0.178, 0.294, 0.41, 0.526, 0.642, 0.759].map((r) => mm(b.length * r));
-  const x = b.mainWidth - b.overallWidth,
-    j = b.length - b.wingDepth;
-  return [
-    ...zs.map((z, i) => ({
-      id: `rail-cross-${i + 1}`,
-      name: `主室 横断 ${i + 1}`,
-      x1: 0,
-      z1: z,
-      x2: b.mainWidth,
-      z2: z,
-      source: '推定：点線の相対位置',
-    })),
-    {
-      id: 'rail-centre',
-      name: '主室 中央縦線',
-      x1: mm(b.mainWidth / 2),
-      z1: zs[0],
-      x2: mm(b.mainWidth / 2),
-      z2: zs.at(-1),
-      source: '推定：点線の相対位置',
-    },
-    {
-      id: 'rail-wing-vertical',
-      name: '西室 縦線',
-      x1: x + 4500,
-      z1: j,
-      x2: x + 4500,
-      z2: b.length - 5200,
-      source: '推定：点線の相対位置',
-    },
-    {
-      id: 'rail-wing-cross',
-      name: '西室 横断',
-      x1: x,
-      z1: j + 4600,
-      x2: -600,
-      z2: j + 4600,
-      source: '推定：点線の相対位置',
-    },
-    {
-      id: 'rail-wing-east',
-      name: '接合部 縦線',
-      x1: -600,
-      z1: j,
-      x2: -600,
-      z2: b.length - 5200,
-      source: '推定：点線の相対位置',
-    },
-    {
-      id: 'rail-south-cross',
-      name: '南側 横断',
-      x1: -600,
-      z1: b.length - 7900,
-      x2: b.mainWidth,
-      z2: b.length - 7900,
-      source: '推定：点線の相対位置',
-    },
-    {
-      id: 'rail-wing-south',
-      name: '西室 南側横断',
-      x1: x,
-      z1: b.length - 5200,
-      x2: -600,
-      z2: b.length - 5200,
-      source: '推定：点線の相対位置',
-    },
-  ];
-}
+export { createRails } from './architecture.js';
 export function railGeometry(r) {
   const length = Math.hypot(r.x2 - r.x1, r.z2 - r.z1);
   return { length, tangent: { x: (r.x2 - r.x1) / length, z: (r.z2 - r.z1) / length } };
@@ -317,6 +258,8 @@ export function positionOnWall(w, s, bottom, art) {
   };
 }
 export function fitPlacement(p, art, b, partitions = [], rails = []) {
+  const problem = placementProblem(art);
+  if (problem) throw new Error(problem);
   const w = walls(b, partitions, rails).find((w) => w.id === p.wallId && w.hangable);
   if (!w) throw new Error('展示可能な壁面を選んでください');
   if (art.width > w.length || art.height > w.height)
@@ -335,6 +278,15 @@ export function layoutIssues(
   layout = project.layouts.find((l) => l.id === project.activeLayoutId),
 ) {
   const issues = [];
+  for (const art of project.artworks) {
+    const count = placedCount(art, layout.placements),
+      limit = quantityLimit(art);
+    if (count && (limit === null || count > limit))
+      issues.push({
+        id: layout.placements.find((p) => p.artworkId === art.id).id,
+        message: `${art.title}：${count}点配置中 / 数量${limit ?? '未定'}。数量を確認するか配置を解除してください`,
+      });
+  }
   const ws = walls(project.building, layout.partitions, project.rails);
   for (const p of layout.placements) {
     const a = project.artworks.find((a) => a.id === p.artworkId),
@@ -483,17 +435,23 @@ export function createProject() {
       image: svgImage(3),
     },
   ];
-  return {
+  for (const art of artworks) art.quantity = 1;
+  return addSuppliedArtworks({
     schemaVersion: SCHEMA_VERSION,
     name: '余白をめぐる展覧会',
     building: { ...DEFAULT_BUILDING },
     rails: createRails(DEFAULT_BUILDING),
     artworks,
+    artworkLabels: structuredClone(DEFAULT_LABELS),
+    frameShapes: [],
+    steelSections: [],
     layouts: [
       {
         id: 'layout-1',
         name: 'プラン A',
+        lighting: lightingDefaults(),
         partitions: [],
+        steelFrames: [],
         placements: [
           { id: 'p-1', artworkId: 'art-1', wallId: 'west', s: 6000, bottom: 950 },
           { id: 'p-2', artworkId: 'art-2', wallId: 'west', s: 8500, bottom: 1050 },
@@ -503,11 +461,20 @@ export function createProject() {
       },
     ],
     activeLayoutId: 'layout-1',
-  };
+  });
 }
 export function validateProject(d) {
   if (!d || d.schemaVersion !== SCHEMA_VERSION || typeof d.name !== 'string' || d.name.length > 200)
     throw new Error('対応するMAプロジェクト形式ではありません（schemaVersion: 1）');
+  d.artworkLabels ??= structuredClone(DEFAULT_LABELS);
+  if (
+    typeof d.artworkLabels.enabled !== 'boolean' ||
+    !Array.isArray(d.artworkLabels.fields) ||
+    d.artworkLabels.fields.length > LABEL_FIELDS.length ||
+    !d.artworkLabels.fields.every((key) => LABEL_FIELDS.some(([id]) => id === key)) ||
+    new Set(d.artworkLabels.fields).size !== d.artworkLabels.fields.length
+  )
+    throw new Error('作品情報の表示設定が不正です');
   const bounds = {
     mainWidth: [2000, 50000],
     overallWidth: [3000, 100000],
@@ -564,19 +531,33 @@ export function validateProject(d) {
   const unique = (xs) => new Set(xs.map((x) => x.id)).size === xs.length;
   if (!unique(d.artworks) || !unique(d.layouts) || !unique(d.rails))
     throw new Error('IDが重複しています');
+  if (
+    d.appliedCatalogs !== undefined &&
+    (!Array.isArray(d.appliedCatalogs) ||
+      d.appliedCatalogs.length > 100 ||
+      !d.appliedCatalogs.every((id) => typeof id === 'string' && id.length <= 100))
+  )
+    throw new Error('作品リストの追加履歴が不正です');
   for (const a of d.artworks) {
+    if (a.quantity === undefined) a.quantity = 1;
     if (
       typeof a.id !== 'string' ||
       typeof a.title !== 'string' ||
       a.title.length > 300 ||
       typeof a.artist !== 'string' ||
       a.artist.length > 300 ||
-      ![a.width, a.height, a.depth].every((n) => Number.isInteger(n) && n > 0 && n <= 30000) ||
+      ![a.width, a.height].every(
+        (n) => n === null || (Number.isInteger(n) && n > 0 && n <= 30000),
+      ) ||
+      !Number.isInteger(a.depth) ||
+      a.depth <= 0 ||
+      a.depth > 30000 ||
       typeof a.image !== 'string' ||
       a.image.length > 12000000 ||
-      !/^data:image\/(png|jpeg|webp|svg\+xml)[;,]/.test(a.image)
+      (a.image !== '' && !/^data:image\/(png|jpeg|webp|svg\+xml)[;,]/.test(a.image))
     )
       throw new Error('作品データまたは画像形式が不正です');
+    validateArtworkMetadata(a);
     // SVG is generated only for built-in samples; prevent active SVG in imported files.
     if (
       a.image.startsWith('data:image/svg') &&
@@ -588,6 +569,8 @@ export function validateProject(d) {
       throw new Error('外部SVGは取り込めません。PNG/JPEG/WebPに変換してください');
   }
   for (const l of d.layouts) {
+    l.lighting ??= lightingDefaults();
+    validateLighting(l.lighting);
     if (
       typeof l.id !== 'string' ||
       typeof l.name !== 'string' ||
@@ -620,7 +603,7 @@ export function validateProject(d) {
     for (const p of l.placements)
       if (
         typeof p.id !== 'string' ||
-        !d.artworks.some((a) => a.id === p.artworkId) ||
+        !d.artworks.some((a) => a.id === p.artworkId && !placementProblem(a)) ||
         !walls(b, l.partitions, d.rails).some((w) => w.id === p.wallId && w.hangable) ||
         !Number.isInteger(p.s) ||
         !Number.isInteger(p.bottom) ||
@@ -629,6 +612,7 @@ export function validateProject(d) {
       )
         throw new Error('配置データが不正です');
   }
+  validateSteelProject(d);
   if (!d.layouts.some((l) => l.id === d.activeLayoutId))
     throw new Error('選択中のレイアウトがありません');
   return d;

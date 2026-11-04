@@ -2,6 +2,30 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Scene } from './Scene.jsx';
 import Plan from './Plan.jsx';
+import LightingPanel from './LightingPanel.jsx';
+import ArtworkCatalog from './ArtworkCatalog.jsx';
+import PackingFields from './PackingFields.jsx';
+import ArtworkLabelOptions from './ArtworkLabelOptions.jsx';
+import ArtworkArrangement from './ArtworkArrangement.jsx';
+import {
+  SteelFrameLibrary,
+  SteelFrameInspector,
+  FrameShapeEditor,
+  SteelSectionEditor,
+} from './SteelFrames.jsx';
+import { newSteelFrame, validateFrame } from './steelFrames.js';
+import { arrangeArtworks } from './artworkArrangement.js';
+import {
+  addSuppliedArtworks,
+  CATALOG_FIELDS,
+  DISPLAY_METHODS,
+  DIMENSION_STATUSES,
+  hasDimensions,
+  placementProblem,
+  inventoryProblem,
+  quantityLimit,
+  mergeCatalog,
+} from './catalog.js';
 import { PartitionLibrary, PartitionInspector, RailEditor } from './Partitions.jsx';
 import {
   createProject,
@@ -9,7 +33,6 @@ import {
   walls,
   fitPlacement,
   layoutIssues,
-  distribute,
   positionOnWall,
   DIMENSIONS,
   uid,
@@ -18,8 +41,19 @@ import {
   railGeometry,
 } from './domain.js';
 import { readProject, saveProject, readImage, download } from './storage.js';
+import {
+  newPlacement,
+  movedPlacement,
+  movedPlacements,
+  assertInventoryChange,
+} from './artworkPlacement.js';
+import { DEFAULT_LABELS, LABEL_FIELDS } from './artworkLabels.js';
 import './style.css';
 import './partitions.css';
+import './lighting.css';
+import './catalog.css';
+import './artwork-placement.css';
+import './steel-frames.css';
 
 function Icon({ name, size = 18, ...props }) {
   const paths = {
@@ -81,9 +115,10 @@ function NumberField({
   step = 1,
   unit = 'mm',
   testId,
+  nullable = false,
 }) {
-  const [v, set] = useState(value);
-  useEffect(() => set(value), [value]);
+  const [v, set] = useState(value ?? '');
+  useEffect(() => set(value ?? ''), [value]);
   return (
     <label className="number-field">
       <span>{label}</span>
@@ -98,12 +133,20 @@ function NumberField({
           value={v}
           onChange={(e) => set(e.target.value)}
           onBlur={() => {
-            const n = Math.round(Number(v));
-            if (v === '' || !Number.isFinite(n) || n < min || n > max) {
-              set(value);
+            if (v === '' && nullable) {
+              if (value !== null) onChange(null);
+              set(value ?? '');
               return;
             }
-            if (n !== value) onChange(n);
+            const n = Math.round(Number(v));
+            if (v === '' || !Number.isFinite(n) || n < min || n > max) {
+              set(value ?? '');
+              return;
+            }
+            if (n !== value) {
+              onChange(n);
+              set(value ?? '');
+            }
           }}
           onKeyDown={(e) => {
             if (e.key === 'Enter') e.currentTarget.blur();
@@ -184,13 +227,26 @@ function App() {
     [storageEnabled, setStorageEnabled] = useState(true);
   const [selectedPartition, setSelectedPartition] = useState(null),
     [partitionFace, setPartitionFace] = useState('front'),
-    [showRails, setShowRails] = useState(true);
+    [showRails, setShowRails] = useState(() => {
+      try {
+        return localStorage.getItem('ma:show-floor-lines') !== 'false';
+      } catch {
+        return true;
+      }
+    });
+  const [selectedSteelFrame, setSelectedSteelFrame] = useState(null);
+  useEffect(() => {
+    try {
+      localStorage.setItem('ma:show-floor-lines', String(showRails));
+    } catch {}
+  }, [showRails]);
   const [selected, setSelected] = useState(['p-1']),
     [view, setView] = useState('split'),
     [mode, setMode] = useState('orbit'),
     [grid, setGrid] = useState(false),
     [details, setDetails] = useState(true),
-    [light, setLight] = useState(1),
+    [cutawayRoof, setCutawayRoof] = useState(true),
+    [inspectorTab, setInspectorTab] = useState('placement'),
     [eye, setEye] = useState(1600),
     [dimensions, setDimensions] = useState(true),
     [camera, setCamera] = useState(null);
@@ -198,8 +254,11 @@ function App() {
     [notice, setNotice] = useState(''),
     [compareId, setCompareId] = useState(''),
     [filter, setFilter] = useState(''),
-    [gap, setGap] = useState(500),
     [libraryTab, setLibraryTab] = useState('artworks');
+  const [placingArtworkId, setPlacingArtworkId] = useState(null),
+    [movingPlacementId, setMovingPlacementId] = useState(null),
+    [movingPlacementIds, setMovingPlacementIds] = useState([]),
+    [placementPreview, setPlacementPreview] = useState(null);
   const scene = useRef(),
     fileImport = useRef();
   const revision = useRef(0),
@@ -208,11 +267,44 @@ function App() {
     compare = project.layouts.find((l) => l.id === compareId && l.id !== layout.id);
   const parts = layout.partitions || [],
     activePart = parts.find((q) => q.id === selectedPartition);
+  const steelFrames = layout.steelFrames || [],
+    activeSteelFrame = steelFrames.find((f) => f.id === selectedSteelFrame);
+  useEffect(() => setSelectedSteelFrame(null), [project.activeLayoutId]);
   const ws = walls(project.building, parts, project.rails),
     p = layout.placements.find((p) => p.id === selected[0]),
     a = project.artworks.find((a) => a.id === p?.artworkId),
     w = ws.find((w) => w.id === p?.wallId);
   const issues = layoutIssues(project);
+  const labelSettings = project.artworkLabels || DEFAULT_LABELS;
+  const placingArt = project.artworks.find((art) => art.id === placingArtworkId);
+  const movingArt = project.artworks.find(
+    (art) => art.id === layout.placements.find((p) => p.id === movingPlacementId)?.artworkId,
+  );
+  const cancelPlacement = useCallback(() => {
+    setPlacingArtworkId(null);
+    setMovingPlacementId(null);
+    setMovingPlacementIds([]);
+    setPlacementPreview(null);
+  }, []);
+  const startArtworkMove = useCallback((id, ids = [id]) => {
+    setMovingPlacementId(id);
+    setMovingPlacementIds(ids);
+    setPlacementPreview(null);
+    setNotice('');
+  }, []);
+  const endArtworkMove = useCallback(() => {
+    setMovingPlacementId(null);
+    setMovingPlacementIds([]);
+    setPlacementPreview(null);
+  }, []);
+  const handlePlacementPreview = useCallback((result) => {
+    setPlacementPreview(result);
+    if (result?.valid) setNotice('');
+  }, []);
+  useEffect(cancelPlacement, [project.activeLayoutId, modal]);
+  useEffect(() => {
+    if (placingArtworkId && !placingArt) cancelPlacement();
+  }, [placingArtworkId, placingArt]);
   const tell = useCallback((message) => setNotice(message), []);
   useEffect(() => {
     let live = true;
@@ -220,7 +312,7 @@ function App() {
       .then((d) => {
         if (!live) return;
         if (d) {
-          validateProject(d);
+          validateProject(addSuppliedArtworks(d));
           setHistory({ past: [], present: d, future: [] });
           setSelected([]);
         }
@@ -268,6 +360,7 @@ function App() {
         try {
           fn(next);
           validateProject(next);
+          assertInventoryChange(h.present, next);
         } catch (err) {
           setTimeout(() => tell(err.message), 0);
           return h;
@@ -295,31 +388,75 @@ function App() {
     [],
   );
   const select = useCallback((id, multi = false) => {
+    setSelectedSteelFrame(null);
     setSelectedPartition(null);
     setSelected((ids) =>
       id ? (multi ? (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]) : [id]) : [],
     );
   }, []);
   const selectPartition = useCallback((id) => {
+    setSelectedSteelFrame(null);
     setSelected([]);
     setSelectedPartition(id);
   }, []);
+  const selectSteelFrame = useCallback((id) => {
+    cancelPlacement();
+    setSelected([]);
+    setSelectedPartition(null);
+    setSelectedSteelFrame(id);
+    setInspectorTab('placement');
+  }, []);
+  const changeSteelFrame = useCallback(
+    (id, changes) =>
+      update((d) => {
+        const frames = d.layouts.find((l) => l.id === d.activeLayoutId).steelFrames;
+        const index = frames.findIndex((f) => f.id === id);
+        if (index >= 0) frames[index] = validateFrame({ ...frames[index], ...changes }, d);
+      }),
+    [],
+  );
+  function addSteelFrame(shapeId) {
+    try {
+      const frame = newSteelFrame(project, shapeId);
+      update((d) => d.layouts.find((l) => l.id === d.activeLayoutId).steelFrames.push(frame));
+      selectSteelFrame(frame.id);
+    } catch (err) {
+      tell(err.message);
+    }
+  }
+  function duplicateSteelFrame(frame) {
+    const copy = structuredClone(frame);
+    copy.id = uid();
+    copy.name += ' コピー';
+    // Prefer an offset but retain an in-bounds copy if there is no room alongside it.
+    for (const [dx, dz] of [
+      [500, 500],
+      [-500, 500],
+      [0, 0],
+    ]) {
+      copy.x = frame.x + dx;
+      copy.z = frame.z + dz;
+      try {
+        validateFrame(copy, project);
+        break;
+      } catch {}
+    }
+    update((d) => d.layouts.find((l) => l.id === d.activeLayoutId).steelFrames.push(copy));
+    selectSteelFrame(copy.id);
+  }
+  function removeSteelFrame(id) {
+    update((d) => {
+      const l = d.layouts.find((l) => l.id === d.activeLayoutId);
+      l.steelFrames = l.steelFrames.filter((f) => f.id !== id);
+    });
+    setSelectedSteelFrame(null);
+  }
   const move = useCallback(
     (id, changes) =>
       update((d) => {
         const l = d.layouts.find((l) => l.id === d.activeLayoutId);
         const p = l.placements.find((p) => p.id === id);
-        if (p)
-          Object.assign(
-            p,
-            fitPlacement(
-              { ...p, ...changes },
-              d.artworks.find((a) => a.id === p.artworkId),
-              d.building,
-              l.partitions,
-              d.rails,
-            ),
-          );
+        if (p) Object.assign(p, movedPlacement(d, id, changes));
       }),
     [],
   );
@@ -330,6 +467,13 @@ function App() {
     });
     setSelected([]);
   }, [selected]);
+  const moveGroup = useCallback((id, changes, ids) => {
+    update((d) => {
+      const l = d.layouts.find((l) => l.id === d.activeLayoutId);
+      const changesById = new Map(movedPlacements(d, id, changes, ids).map((p) => [p.id, p]));
+      l.placements = l.placements.map((p) => changesById.get(p.id) || p);
+    });
+  }, []);
   useEffect(() => {
     const key = (e) => {
       if (
@@ -350,65 +494,62 @@ function App() {
         e.preventDefault();
         remove();
       }
+      if (e.code === 'Delete' && selectedSteelFrame) {
+        e.preventDefault();
+        removeSteelFrame(selectedSteelFrame);
+      }
       if (e.code === 'Escape') {
+        cancelPlacement();
         setSelected([]);
         setSelectedPartition(null);
+        setSelectedSteelFrame(null);
         setMode('orbit');
       }
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
-  }, [modal, selected, undo, redo, remove]);
+  }, [modal, selected, selectedSteelFrame, undo, redo, remove]);
   function addArtwork(artworkId) {
-    let id = uid();
-    update((d) => {
-      const art = d.artworks.find((a) => a.id === artworkId);
-      const l = d.layouts.find((l) => l.id === d.activeLayoutId);
-      const wallId = activePart
-        ? `partition:${activePart.id}:${partitionFace}`
-        : w?.hangable
-          ? w.id
-          : 'west';
-      const onWall = l.placements.filter((p) => p.wallId === wallId);
-      const last = onWall.reduce(
-        (n, p) => Math.max(n, p.s + d.artworks.find((a) => a.id === p.artworkId).width / 2),
-        1000,
-      );
-      l.placements.push(
-        fitPlacement(
-          {
-            id,
-            artworkId,
-            wallId,
-            s: last + 500 + art.width / 2,
-            bottom: Math.max(0, 1500 - art.height / 2),
-          },
-          art,
-          d.building,
-          l.partitions,
-          d.rails,
-        ),
-      );
-    });
-    setSelected([id]);
-    setSelectedPartition(null);
+    const art = project.artworks.find((a) => a.id === artworkId);
+    const problem = placementProblem(art) || inventoryProblem(art, layout.placements);
+    if (problem) return tell(problem);
+    setPlacingArtworkId(artworkId);
+    setPlacementPreview(null);
+    setNotice('');
   }
-  function arrange(manual = false) {
+  function commitPlacement(candidate) {
+    if (!placingArtworkId) return;
+    const id = uid();
     try {
-      const ids =
-        selected.length >= 2
-          ? selected
-          : layout.placements.filter((q) => q.wallId === p?.wallId).map((q) => q.id);
-      const result = distribute(layout.placements, project.artworks, ids, manual ? gap : null);
-      for (const q of result) {
-        const art = project.artworks.find((a) => a.id === q.artworkId),
-          wall = ws.find((w) => w.id === q.wallId);
-        if (q.s + art.width / 2 > wall.length) throw new Error('指定の間隔では壁面に収まりません');
-      }
+      const placed = newPlacement(project, placingArtworkId, { ...candidate, id });
+      update((d) => {
+        const l = d.layouts.find((l) => l.id === d.activeLayoutId);
+        l.placements.push(newPlacement(d, placingArtworkId, placed));
+      });
+      setSelected([id]);
+      setSelectedSteelFrame(null);
+      setSelectedPartition(null);
+      cancelPlacement();
+      tell('作品を配置しました');
+    } catch (err) {
+      tell(err.message);
+    }
+  }
+  const arrangementIds =
+    selected.length >= 2
+      ? selected
+      : layout.placements.filter((q) => q.wallId === p?.wallId).map((q) => q.id);
+  function arrange(options, message) {
+    try {
+      const result = arrangeArtworks(
+        project,
+        options.mode === 'align' ? selected : arrangementIds,
+        options,
+      );
       update((d) => {
         d.layouts.find((l) => l.id === d.activeLayoutId).placements = result;
       });
-      tell(manual ? `${format(gap)} mmの間隔で配置しました` : '作品の端と端の間隔を均等にしました');
+      tell(message);
     } catch (err) {
       tell(err.message);
     }
@@ -459,7 +600,7 @@ function App() {
   );
   function duplicatePartition(part) {
     const id = uid();
-    update((d) => {
+    const duplicateInto = (d) => {
       const l = d.layouts.find((l) => l.id === d.activeLayoutId);
       l.partitions.push(
         fitPartition(
@@ -476,8 +617,17 @@ function App() {
           wallId: p.wallId.replace(`partition:${part.id}:`, `partition:${id}:`),
         }));
       l.placements.push(...copies);
-    });
-    selectPartition(id);
+    };
+    try {
+      const next = structuredClone(project);
+      duplicateInto(next);
+      validateProject(next);
+      assertInventoryChange(project, next);
+      update(duplicateInto);
+      selectPartition(id);
+    } catch (err) {
+      tell(err.message);
+    }
   }
   function applyRails(rails) {
     try {
@@ -638,6 +788,12 @@ function App() {
               可動壁 <small>{parts.length}</small>
             </button>
             <button
+              className={libraryTab === 'steel' ? 'active' : ''}
+              onClick={() => setLibraryTab('steel')}
+            >
+              鉄骨 <small>{steelFrames.length}</small>
+            </button>
+            <button
               className={libraryTab === 'layouts' ? 'active' : ''}
               onClick={() => setLibraryTab('layouts')}
             >
@@ -651,6 +807,9 @@ function App() {
                 <Button icon="plus" className="full" onClick={() => setModal('add-artwork')}>
                   作品を登録
                 </Button>
+                <Button icon="download" className="full" onClick={() => setModal('catalog')}>
+                  作品リスト・保存
+                </Button>
                 <input
                   className="search"
                   aria-label="作品を検索"
@@ -662,27 +821,56 @@ function App() {
               <div className="artwork-list">
                 {project.artworks
                   .filter((a) =>
-                    (a.title + ' ' + a.artist).toLowerCase().includes(filter.toLowerCase()),
+                    [a.title, a.artist, ...Object.keys(CATALOG_FIELDS).map((key) => a[key])]
+                      .join(' ')
+                      .toLowerCase()
+                      .includes(filter.toLowerCase()),
                   )
                   .map((art, i) => {
                     const count = layout.placements.filter((p) => p.artworkId === art.id).length;
+                    const addProblem =
+                      placementProblem(art) || inventoryProblem(art, layout.placements);
                     return (
                       <article
                         className={`art-card ${art.id === a?.id ? 'current' : ''}`}
                         key={art.id}
                       >
                         <div className="art-thumb">
-                          <img src={art.image} alt={art.title} loading="lazy" />
+                          {art.image ? (
+                            <img src={art.image} alt={art.title} loading="lazy" />
+                          ) : (
+                            <div className="no-art-image">
+                              <Icon name="image" />
+                              画像未登録
+                            </div>
+                          )}
                           <span>{String(i + 1).padStart(2, '0')}</span>
                         </div>
                         <div className="art-card-body">
                           <h3>{art.title}</h3>
-                          <p>
-                            {format(art.width)} × {format(art.height)} <span>mm</span>
+                          <p className="art-metadata">
+                            {[art.artist, art.year, art.attribute].filter(Boolean).join(' / ')}
                           </p>
+                          <p>
+                            {art.dimensionStatus && art.dimensionStatus !== 'supplied'
+                              ? `${DIMENSION_STATUSES[art.dimensionStatus]} / `
+                              : ''}
+                            {hasDimensions(art)
+                              ? `${format(art.width)} × ${format(art.height)} × ${format(art.depth)} mm`
+                              : `実寸未入力 / 厚み ${format(art.depth)} mm`}
+                          </p>
+                          {(art.sizeText || art.quantity !== undefined) && (
+                            <p className="art-size-source">
+                              {art.sizeText}
+                              {art.sizeText ? ' / ' : ''}
+                              {art.quantity
+                                ? `${art.quantity}点${art.notes?.includes('くらい') ? '程度' : ''}`
+                                : '点数未定'}
+                            </p>
+                          )}
                           <div className="card-actions">
                             <span className={count ? 'placed' : ''}>
-                              {count ? `${count} 点配置中` : '未配置'}
+                              {count} / {quantityLimit(art) ?? '数量未定'} 点配置中
                             </span>
                             <button
                               aria-label={`${art.title}を編集`}
@@ -693,6 +881,9 @@ function App() {
                             <button
                               className="add-button"
                               aria-label={`${art.title}を配置`}
+                              disabled={!!addProblem}
+                              title={addProblem || '壁に沿ってプレビューし、クリックして1点配置'}
+                              aria-pressed={placingArtworkId === art.id}
                               onClick={() => addArtwork(art.id)}
                             >
                               <Icon name="plus" size={15} />
@@ -715,6 +906,20 @@ function App() {
                 </span>
               </div>
             </>
+          ) : libraryTab === 'steel' ? (
+            <SteelFrameLibrary
+              project={project}
+              frames={steelFrames}
+              selected={selectedSteelFrame}
+              onSelect={selectSteelFrame}
+              onAdd={addSteelFrame}
+              onRegister={() => setModal('frame-shape')}
+              onRemoveShape={(id) =>
+                update((d) => {
+                  d.frameShapes = d.frameShapes.filter((s) => s.id !== id);
+                })
+              }
+            />
           ) : libraryTab === 'partitions' ? (
             <PartitionLibrary
               partitions={parts}
@@ -905,6 +1110,23 @@ function App() {
             </button>
           </div>
           <div className={`viewport view-${view}`}>
+            {movingArt && (
+              <div
+                className={`drag-feedback ${placementPreview?.valid === false ? 'invalid' : ''}`}
+                role="status"
+              >
+                <strong>
+                  移動中：
+                  {movingPlacementIds.length > 1
+                    ? `${movingPlacementIds.length}点の作品`
+                    : movingArt.title}
+                </strong>
+                <span>
+                  {placementPreview?.message ||
+                    '間隔・高さの関係を保って移動 · 離して確定 · Escで中止'}
+                </span>
+              </div>
+            )}
             <section
               className="three-panel"
               style={view === 'plan' ? { display: 'none' } : undefined}
@@ -917,16 +1139,28 @@ function App() {
                 mode={mode}
                 grid={grid}
                 details={details}
-                light={light}
+                cutawayRoof={cutawayRoof}
                 eye={eye}
                 selectedPartition={selectedPartition}
+                selectedSteelFrame={selectedSteelFrame}
+                onSelectSteelFrame={selectSteelFrame}
+                onSteelFrameMove={changeSteelFrame}
                 showRails={showRails}
                 onSelectPartition={selectPartition}
                 onPartitionMove={changePartition}
                 onSelect={select}
-                onMove={move}
+                onMoveGroup={moveGroup}
                 onNotice={tell}
                 onCamera={setCamera}
+                placingArtworkId={placingArtworkId}
+                movingPlacementId={movingPlacementId}
+                movingPlacementIds={movingPlacementIds}
+                onMoveStart={startArtworkMove}
+                onMoveEnd={endArtworkMove}
+                placementPreview={placementPreview}
+                onPreview={handlePlacementPreview}
+                onPlace={commitPlacement}
+                labelSettings={labelSettings}
               />
               <div className="canvas-label">
                 <span className="live-dot" /> {mode === 'walk' ? 'WALKTHROUGH' : 'PERSPECTIVE'}
@@ -969,11 +1203,13 @@ function App() {
                     selected={selected}
                     compare={compare}
                     onSelect={select}
-                    onMove={move}
                     camera={camera}
                     mini
                     selectedPartition={selectedPartition}
                     onSelectPartition={selectPartition}
+                    selectedSteelFrame={selectedSteelFrame}
+                    onSelectSteelFrame={selectSteelFrame}
+                    onSteelFrameMove={changeSteelFrame}
                     onPartitionMove={changePartition}
                     showRails={showRails}
                   />
@@ -1000,13 +1236,26 @@ function App() {
                 selected={selected}
                 compare={compare}
                 onSelect={select}
-                onMove={move}
+                onMoveGroup={moveGroup}
                 camera={mode === 'walk' ? camera : null}
                 showDimensions={dimensions}
                 selectedPartition={selectedPartition}
                 onSelectPartition={selectPartition}
                 onPartitionMove={changePartition}
                 showRails={showRails}
+                selectedSteelFrame={selectedSteelFrame}
+                onSelectSteelFrame={selectSteelFrame}
+                onSteelFrameMove={changeSteelFrame}
+                placingArtworkId={placingArtworkId}
+                movingPlacementId={movingPlacementId}
+                movingPlacementIds={movingPlacementIds}
+                onMoveStart={startArtworkMove}
+                onMoveEnd={endArtworkMove}
+                onNotice={tell}
+                placementPreview={placementPreview}
+                onPreview={handlePlacementPreview}
+                onPlace={commitPlacement}
+                labelSettings={labelSettings}
               />
               <div className="plan-legend">
                 <span>
@@ -1023,21 +1272,63 @@ function App() {
               </div>
             </section>
           </div>
-          <div className="bottom-controls">
-            <div className="lighting">
-              <Icon name="sun" size={17} />
-              <span>明るさ</span>
-              <input
-                aria-label="明るさ"
-                type="range"
-                min=".4"
-                max="1.8"
-                step=".1"
-                value={light}
-                onChange={(e) => setLight(+e.target.value)}
-              />
-              <small>{Math.round(light * 100)}%</small>
+          {placingArt && (
+            <div
+              className={`placement-banner ${placementPreview?.valid === false ? 'invalid' : ''}`}
+              role="status"
+            >
+              <div>
+                <strong>配置中：{placingArt.title}</strong>
+                <span>
+                  {placementPreview?.message ||
+                    (placementPreview?.placement
+                      ? `クリックで配置 · 中心 ${format(placementPreview.placement.s)} mm / 下端 ${format(placementPreview.placement.bottom)} mm`
+                      : '3Dまたは平面図で壁を指してください。クリックで確定、Escで中止。')}
+                </span>
+              </div>
+              <Button onClick={cancelPlacement}>配置を中止</Button>
             </div>
+          )}
+          <div className="bottom-controls">
+            <div className="artwork-display-controls">
+              <label className="check-label">
+                <input
+                  type="checkbox"
+                  aria-label="作品情報を表示"
+                  checked={labelSettings.enabled}
+                  onChange={(e) =>
+                    update((d) => {
+                      d.artworkLabels = { ...labelSettings, enabled: e.target.checked };
+                    })
+                  }
+                />
+                作品情報
+              </label>
+              <button className="label-options" onClick={() => setModal('artwork-labels')}>
+                表示項目
+              </button>
+            </div>
+            <label className="check-label">
+              <input
+                type="checkbox"
+                aria-label="可動壁の床ライン"
+                checked={showRails}
+                onChange={(e) => setShowRails(e.target.checked)}
+              />
+              可動壁の床ライン
+            </label>
+            <button
+              className="lighting-open-button"
+              onClick={() => setInspectorTab((t) => (t === 'lighting' ? 'placement' : 'lighting'))}
+              aria-pressed={inspectorTab === 'lighting'}
+            >
+              <Icon name="sun" size={17} />
+              照明・日照
+              <span>
+                {layout.lighting.spots ? 'S ' + layout.lighting.spotLux : 'S OFF'} /{' '}
+                {layout.lighting.rails ? 'L ' + layout.lighting.railLux : 'L OFF'} lx
+              </span>
+            </button>
             <label className="check-label">
               <input
                 type="checkbox"
@@ -1071,12 +1362,60 @@ function App() {
             </span>
           </footer>
         </main>
-        <aside className="inspector sidebar">
-          <div className="inspector-heading">
-            <h2>配置の詳細</h2>
-            <span className="tag">mm</span>
+        <aside
+          className={`inspector sidebar ${inspectorTab === 'lighting' ? 'lighting-open' : ''}`}
+        >
+          <div className="inspector-heading inspector-tabs">
+            <button
+              className={inspectorTab === 'placement' ? 'active' : ''}
+              onClick={() => setInspectorTab('placement')}
+            >
+              配置の詳細
+            </button>
+            <button
+              className={inspectorTab === 'lighting' ? 'active' : ''}
+              onClick={() => setInspectorTab('lighting')}
+            >
+              <Icon name="sun" size={15} />
+              照明・日照
+            </button>
           </div>
-          {activePart ? (
+          {inspectorTab === 'lighting' ? (
+            <LightingPanel
+              project={project}
+              layout={layout}
+              placement={p}
+              artwork={a}
+              wall={w}
+              onChange={(changes) =>
+                update((d) =>
+                  Object.assign(d.layouts.find((l) => l.id === d.activeLayoutId).lighting, changes),
+                )
+              }
+              cutawayRoof={cutawayRoof}
+              onCutaway={setCutawayRoof}
+              onSources={() => setModal('lighting-sources')}
+              onWindowView={(side) => {
+                setMode('walk');
+                setView('three');
+                scene.current?.windowView(side);
+              }}
+            />
+          ) : activeSteelFrame ? (
+            <SteelFrameInspector
+              frame={activeSteelFrame}
+              project={project}
+              onFocus={() => {
+                setMode('orbit');
+                setView('three');
+                scene.current?.focusSteelFrame(activeSteelFrame.id);
+              }}
+              onChange={(changes) => changeSteelFrame(activeSteelFrame.id, changes)}
+              onDuplicate={() => duplicateSteelFrame(activeSteelFrame)}
+              onRemove={() => removeSteelFrame(activeSteelFrame.id)}
+              onRegisterSection={() => setModal('steel-section')}
+            />
+          ) : activePart ? (
             <PartitionInspector
               partition={activePart}
               rails={project.rails}
@@ -1090,7 +1429,11 @@ function App() {
           ) : p && a && w ? (
             <>
               <div className="selected-summary">
-                <img src={a.image} alt="選択中の作品" />
+                {a.image ? (
+                  <img src={a.image} alt="選択中の作品" />
+                ) : (
+                  <div className="no-art-image">画像なし</div>
+                )}
                 <div>
                   <span className="eyebrow">SELECTED WORK</span>
                   <h3>{a.title}</h3>
@@ -1196,47 +1539,22 @@ function App() {
                 </div>
                 <p className="field-note">フレームを含む外寸。全プランで共通。</p>
               </div>
-              <div className="inspector-section">
-                <div className="section-label">
-                  間隔と整列{' '}
-                  <span>{selected.length >= 2 ? `${selected.length} 点` : 'この壁の全作品'}</span>
-                </div>
-                <Button className="full" icon="ruler" onClick={() => arrange(false)}>
-                  両端を固定して等間隔
-                </Button>
-                <div className="gap-row">
-                  <NumberField label="作品間のすき間" value={gap} max={20000} onChange={setGap} />
-                  <Button onClick={() => arrange(true)}>適用</Button>
-                </div>
-                <p className="field-note">
-                  Shift＋クリックで複数選択。
-                  <br />
-                  間隔は作品の端から端で計算します。
-                </p>
-              </div>
+              <ArtworkArrangement
+                selectedCount={selected.length}
+                targetCount={arrangementIds.length}
+                onArrange={arrange}
+                Button={Button}
+                NumberField={NumberField}
+              />
               <div className="inspector-section">
                 <div className="placement-actions">
                   <Button
                     icon="copy"
-                    onClick={() => {
-                      const id = uid();
-                      update((d) => {
-                        const l = d.layouts.find((l) => l.id === d.activeLayoutId);
-                        l.placements.push(
-                          fitPlacement(
-                            { ...p, id, s: p.s + a.width + 500 },
-                            a,
-                            d.building,
-                            l.partitions,
-                            d.rails,
-                          ),
-                        );
-                      });
-                      setSelected([id]);
-                      setSelectedPartition(null);
-                    }}
+                    disabled={!!inventoryProblem(a, layout.placements)}
+                    title={inventoryProblem(a, layout.placements) || '残りの数量から1点を追加配置'}
+                    onClick={() => addArtwork(a.id)}
                   >
-                    複製
+                    追加配置
                   </Button>
                   <Button icon="trash" className="danger" onClick={remove}>
                     配置解除
@@ -1257,26 +1575,28 @@ function App() {
               </p>
             </div>
           )}
-          <div className="inspector-bottom">
-            <NumberField
-              label="歩行時の目線高さ"
-              value={eye}
-              min={800}
-              max={2100}
-              onChange={setEye}
-            />
-            {issues.length > 0 ? (
-              <button className="issues-button" onClick={() => setModal('issues')}>
-                <Icon name="info" size={15} />
-                {issues.length} 件の配置確認
-              </button>
-            ) : (
-              <span className="valid-label">
-                <Icon name="check" size={15} />
-                重なり・壁面範囲を確認済み
-              </span>
-            )}
-          </div>
+          {inspectorTab !== 'lighting' && (
+            <div className="inspector-bottom">
+              <NumberField
+                label="歩行時の目線高さ"
+                value={eye}
+                min={800}
+                max={2100}
+                onChange={setEye}
+              />
+              {issues.length > 0 ? (
+                <button className="issues-button" onClick={() => setModal('issues')}>
+                  <Icon name="info" size={15} />
+                  {issues.length} 件の配置確認
+                </button>
+              ) : (
+                <span className="valid-label">
+                  <Icon name="check" size={15} />
+                  重なり・壁面範囲を確認済み
+                </span>
+              )}
+            </div>
+          )}
         </aside>
       </div>
       {notice && (
@@ -1287,6 +1607,46 @@ function App() {
             <Icon name="close" size={16} />
           </button>
         </div>
+      )}
+      {modal === 'artwork-labels' && (
+        <ArtworkLabelOptions
+          settings={labelSettings}
+          onChange={(value) =>
+            update((d) => {
+              d.artworkLabels = value;
+            })
+          }
+          onClose={() => setModal(null)}
+          Modal={Modal}
+          Button={Button}
+        />
+      )}
+      {modal === 'catalog' && (
+        <ArtworkCatalog
+          artworks={project.artworks}
+          name={project.name}
+          Modal={Modal}
+          Button={Button}
+          onClose={() => setModal(null)}
+          onEdit={(id) => setModal({ type: 'edit-artwork', id })}
+          onImport={(data) => {
+            const next = mergeCatalog(project, data, validateProject);
+            for (const l of next.layouts)
+              l.placements = l.placements.map((p) =>
+                fitPlacement(
+                  p,
+                  next.artworks.find((a) => a.id === p.artworkId),
+                  next.building,
+                  l.partitions,
+                  next.rails,
+                ),
+              );
+            validateProject(next);
+            assertInventoryChange(project, next);
+            update((d) => Object.assign(d, next));
+            tell('作品リストを取り込みました。直前の状態へは「元に戻す」で戻せます');
+          }}
+        />
       )}
       {(modal === 'add-artwork' || modal?.type === 'edit-artwork') && (
         <ArtworkModal
@@ -1305,6 +1665,7 @@ function App() {
                     : p,
                 );
               validateProject(next);
+              assertInventoryChange(project, next);
               update((d) => Object.assign(d, next));
               setModal(null);
             } catch (err) {
@@ -1361,6 +1722,49 @@ function App() {
           <RailEditor rails={project.rails} onApply={applyRails} />
         </Modal>
       )}
+      {modal === 'frame-shape' && (
+        <Modal
+          title="独自の組立形状を登録"
+          subtitle="頂点と部材をつなぎ、矩形・ボックス以外のフレームを作れます。"
+          onClose={() => setModal(null)}
+          wide
+        >
+          <FrameShapeEditor
+            onSave={(shape) => {
+              const next = structuredClone(project);
+              next.frameShapes.push(shape);
+              validateProject(next);
+              update((d) => d.frameShapes.push(shape));
+              setModal(null);
+              tell('組立形状を登録しました。鉄骨タブから選べます');
+            }}
+          />
+        </Modal>
+      )}
+      {modal === 'steel-section' && (
+        <Modal title="独自の部材断面を登録" onClose={() => setModal(null)}>
+          <SteelSectionEditor
+            onSave={(section) => {
+              const next = structuredClone(project);
+              next.steelSections.push(section);
+              const f = next.layouts
+                .find((l) => l.id === next.activeLayoutId)
+                .steelFrames.find((f) => f.id === selectedSteelFrame);
+              if (f) {
+                // Retain the registration even if a large section cannot fit this instance.
+                try {
+                  validateFrame({ ...f, sectionId: section.id }, next);
+                  f.sectionId = section.id;
+                } catch {}
+              }
+              validateProject(next);
+              update((d) => Object.assign(d, next));
+              setModal(null);
+              tell('部材断面を登録しました');
+            }}
+          />
+        </Modal>
+      )}
       {modal?.type === 'delete-partition' && (
         <Modal
           title="可動壁を削除しますか"
@@ -1388,6 +1792,49 @@ function App() {
           </div>
         </Modal>
       )}
+      {modal === 'lighting-sources' && (
+        <Modal
+          title="日照・照明の条件と根拠"
+          subtitle="京都市立芸術大学 C棟1階 ギャラリー@KCUA"
+          onClose={() => setModal(null)}
+          wide
+        >
+          <div className="lighting-sources">
+            <img
+              src="/references/site-context.png"
+              alt="ユーザー提供：ギャラリーと芸術資料館、南側の建物を示す配置図"
+            />
+            <div>
+              <h3>ご指定の確定条件</h3>
+              <p>
+                図面上端が真北。天井は不透明で閉じており、外光はガラス窓から入ります。南側の離れた建物が南からの光を遮ります。
+              </p>
+              <h3>配置図からの推定</h3>
+              <p>
+                東側の芸術資料館は隣接、南側に建物、北側には比較的開放された外部があると読み取れます。現在のモデルは北・南のガラス面から採光し、東西の壁は不透明としています。建物の高さ・間隔は画像から確定していません。
+              </p>
+              <h3>遮蔽は角度・割合で近似</h3>
+              <p>
+                南115〜245°、遮蔽高度80°、遮蔽率100%を初期仮定とします。北窓の天空開放率85%、南窓20%、ガラス透過率65%も推定です。外部建物のメッシュは作らず、この条件を調整できます。
+              </p>
+              <h3>照度と見え方</h3>
+              <p>
+                スポットのlxは光軸上の壁面目標、定常光のlxは主室基準面での目標です。器具の配光は円すい／線状面光源、間接反射は簡易近似。定常光・天空光の複雑な遮蔽と多重反射は表示と数値の間で差があり、実測照明計算を代替しません。俯瞰で天井や梁を透かしても遮光は維持します。
+              </p>
+              <a href="https://www.kcua.ac.jp/profile/facilities/" target="_blank" rel="noreferrer">
+                大学の施設・キャンパスマップ
+              </a>
+              <a
+                href="https://gml.noaa.gov/grad/solcalc/solareqns.PDF"
+                target="_blank"
+                rel="noreferrer"
+              >
+                太陽位置計算の参照：NOAA
+              </a>
+            </div>
+          </div>
+        </Modal>
+      )}
       {modal === 'help' && (
         <Modal
           title="はじめての展示計画"
@@ -1404,12 +1851,12 @@ function App() {
               </p>
               <h3>02 / 壁に配置する</h3>
               <p>
-                ライブラリの＋で配置。作品を選び、壁面・起点からの中心距離・床からの下端高さを編集します。3Dでは上下左右、平面図では壁に沿ってドラッグできます。通常10
+                ライブラリの＋で配置。作品を選び、壁面・起点からの中心距離・床からの下端高さを編集します。同じ壁面の作品を複数選択してドラッグすると、間隔・高さの関係を保ってまとめて移動できます。別の壁面へも移せます。赤い重なり位置では確定できません。3Dでは上下左右、平面図では壁に沿ってドラッグできます。通常10
                 mm、3DでAltを押すと1 mm刻み。
               </p>
               <h3>03 / 揃える・比較する</h3>
               <p>
-                Shift＋クリックで複数選択。「等間隔」は両端の作品を固定して作品間のすき間を均等にします。1点選択時は同じ壁の全作品が対象。「プラン」で複製し、比較するプランを選ぶと紫の輪郭を重ねます。
+                Shift/Ctrl＋クリックで複数選択し、左右・上下の端や中央を揃えます。均等配置は横・縦を切り替え、両端を固定するか、すき間をmmで指定できます。「行列に並べる」で列数と列・行のすき間を指定します。均等・行列配置は1点選択時に同じ壁の全作品が対象です。「プラン」で複製し、比較するプランを選ぶと紫の輪郭を重ねます。
               </p>
             </div>
             <div>
@@ -1494,8 +1941,18 @@ function App() {
 function ArtworkModal({ art, onClose, onSave, onDelete, tell }) {
   const [draft, setDraft] = useState(() =>
     art
-      ? { ...art }
-      : { id: uid(), title: '', artist: '', width: 600, height: 800, depth: 30, image: '' },
+      ? { ...art, quantity: quantityLimit(art) }
+      : {
+          id: uid(),
+          title: '',
+          artist: '',
+          width: null,
+          height: null,
+          depth: 40,
+          image: '',
+          quantity: 1,
+          displayMethod: 'wall',
+        },
   );
   const [busy, setBusy] = useState(false),
     [confirmDelete, setConfirmDelete] = useState(false),
@@ -1518,7 +1975,7 @@ function ArtworkModal({ art, onClose, onSave, onDelete, tell }) {
   return (
     <Modal
       title={art ? '作品を編集' : '作品を登録'}
-      subtitle="額・支持体を含む外寸をmmで入力してください。"
+      subtitle="画像・実寸が未確定でも保存できます。配置用の外寸は1点あたり、額・支持体を含めてmmで入力してください。"
       onClose={onClose}
     >
       <div className="artwork-form">
@@ -1537,7 +1994,7 @@ function ArtworkModal({ art, onClose, onSave, onDelete, tell }) {
             <>
               <Icon name="image" size={34} />
               <strong>{busy ? '画像を処理中…' : '画像をドロップ、または選択'}</strong>
-              <small>JPEG / PNG / WebP · 最大30 MB</small>
+              <small>JPEG / PNG / WebP · 最大30 MB · 任意</small>
             </>
           )}
           <span>{draft.image ? '画像を変更' : ''}</span>
@@ -1559,7 +2016,7 @@ function ArtworkModal({ art, onClose, onSave, onDelete, tell }) {
           />
         </label>
         <label className="text-field">
-          作者 / メモ
+          作家
           <input
             aria-label="作者"
             value={draft.artist}
@@ -1567,19 +2024,101 @@ function ArtworkModal({ art, onClose, onSave, onDelete, tell }) {
             onChange={(e) => edit('artist', e.target.value)}
           />
         </label>
+        <div className="catalog-fields">
+          {Object.entries(CATALOG_FIELDS).map(([key, [label, max]]) => (
+            <label
+              className={`text-field ${['notes', 'sizeText', 'interpretation', 'arrangement'].includes(key) ? 'full-field' : ''}`}
+              key={key}
+            >
+              {label}
+              {['notes', 'interpretation'].includes(key) ? (
+                <textarea
+                  aria-label={label}
+                  value={draft[key] ?? ''}
+                  maxLength={max}
+                  onChange={(e) => edit(key, e.target.value)}
+                />
+              ) : (
+                <input
+                  aria-label={label}
+                  value={draft[key] ?? ''}
+                  maxLength={max}
+                  onChange={(e) => edit(key, e.target.value)}
+                />
+              )}
+            </label>
+          ))}
+          <NumberField
+            label="数量（配置上限）"
+            value={draft.quantity ?? null}
+            min={1}
+            max={10000}
+            unit="点"
+            nullable
+            onChange={(v) => edit('quantity', v)}
+          />
+          <label className="text-field">
+            展示方法
+            <select
+              aria-label="展示方法"
+              value={draft.displayMethod ?? 'undecided'}
+              onChange={(e) => edit('displayMethod', e.target.value)}
+            >
+              {Object.entries(DISPLAY_METHODS).map(([key, label]) => (
+                <option value={key} key={key}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-field">
+            寸法の確度
+            <select
+              aria-label="寸法の確度"
+              value={draft.dimensionStatus ?? 'supplied'}
+              onChange={(e) => edit('dimensionStatus', e.target.value)}
+            >
+              {Object.entries(DIMENSION_STATUSES).map(([key, label]) => (
+                <option key={key} value={key}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <NumberField
+            label="展示構成の列数"
+            value={draft.assemblyColumns ?? null}
+            min={1}
+            max={100}
+            unit="列"
+            nullable
+            onChange={(v) => edit('assemblyColumns', v)}
+          />
+          <NumberField
+            label="展示構成の段数"
+            value={draft.assemblyRows ?? null}
+            min={1}
+            max={100}
+            unit="段"
+            nullable
+            onChange={(v) => edit('assemblyRows', v)}
+          />
+        </div>
         <div className="three-fields">
           <NumberField
             label="幅"
             value={draft.width}
             min={1}
             max={30000}
+            nullable
             onChange={(v) => edit('width', v)}
           />
           <NumberField
             label="高さ"
             value={draft.height}
             min={1}
-            max={20000}
+            max={30000}
+            nullable
             onChange={(v) => edit('height', v)}
           />
           <NumberField
@@ -1590,7 +2129,11 @@ function ArtworkModal({ art, onClose, onSave, onDelete, tell }) {
             onChange={(v) => edit('depth', v)}
           />
         </div>
-        <p className="field-note">画像の縦横比にかかわらず、この寸法で表示します。</p>
+        <PackingFields draft={draft} edit={edit} NumberField={NumberField} Button={Button} />
+        <p className="field-note">
+          数量は各プランに配置できる上限です。通常は1、複数枚は総数を入力します。数量未入力では追加できません。
+          幅・高さは1枚あたりのmmです。概寸・仮寸法は「寸法の確度」に記録します。幅・高さが未入力の作品と、机上・自立作品は一覧で管理します。
+        </p>
         {error && (
           <p className="form-error" role="alert">
             {error}
@@ -1612,8 +2155,8 @@ function ArtworkModal({ art, onClose, onSave, onDelete, tell }) {
           className="primary"
           disabled={busy}
           onClick={() => {
-            if (!draft.image || !draft.title.trim()) {
-              setError('作品名と画像を指定してください');
+            if (!draft.title.trim()) {
+              setError('作品名を入力してください');
               return;
             }
             onSave({ ...draft, title: draft.title.trim() });

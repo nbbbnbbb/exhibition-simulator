@@ -2,6 +2,8 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import * as THREE from 'three';
+import { DEFAULT_BUILDING } from '../src/domain.js';
+import { placeOnPlan } from './placement-test-helpers.mjs';
 // Use the bundled Playwright when available; no browser download is needed on Windows.
 let playwright;
 try {
@@ -30,15 +32,40 @@ try {
   await page.getByRole('heading', { name: '展示を、空間で考える。' }).waitFor();
   await page.getByText('保存済み', { exact: false }).first().waitFor();
   assert((await page.locator('canvas').count()) === 1, '3D canvas missing');
+  // These two editions are used on both sides of a copied partition later.
+  for (const title of ['静かな地平 / サンプル', 'かたちの対話 / サンプル']) {
+    await page.getByRole('button', { name: `${title}を編集`, exact: true }).click();
+    const quantity = page.getByRole('spinbutton', { name: '数量（配置上限）', exact: true });
+    await quantity.fill('3');
+    await quantity.press('Tab');
+    await page.getByRole('button', { name: '変更を保存', exact: true }).click();
+  }
   await page.screenshot({ path: 'test-results/01-workspace.png', fullPage: true });
   // Committing a precise numeric edit updates both the document and saved storage.
   const s = page.getByTestId('position-s');
   await s.fill('6250');
   await s.press('Tab');
-  await page.waitForTimeout(700);
+  await page.waitForFunction(async () => {
+    const db = await new Promise((resolve, reject) => {
+      const r = indexedDB.open('ma-exhibition-v1', 1);
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+    });
+    try {
+      return await new Promise((resolve) => {
+        const r = db.transaction('projects').objectStore('projects').get('current');
+        r.onsuccess = () => resolve(r.result?.layouts[0]?.placements[0]?.s === 6250);
+      });
+    } finally {
+      db.close();
+    }
+  });
   await page.reload({ waitUntil: 'networkidle' });
   await page.locator('.plan-art').first().locator('line').last().click({ force: true });
   await page.getByTestId('position-s').waitFor();
+  await page.waitForFunction(
+    () => document.querySelector('[data-testid=position-s]')?.value === '6250',
+  );
   assert(
     (await page.getByTestId('position-s').inputValue()) === '6250',
     'numeric edit did not persist',
@@ -97,6 +124,7 @@ try {
   await page
     .locator('.modal input[type=file]')
     .setInputFiles({ name: 'test-art.png', mimeType: 'image/png', buffer: png });
+  await page.getByAltText('作品画像プレビュー', { exact: true }).waitFor();
   await page.getByRole('textbox', { name: '作品名', exact: true }).fill('検証作品');
   const width = page.getByRole('spinbutton', { name: '幅', exact: true });
   await width.fill('1234');
@@ -105,7 +133,8 @@ try {
   await height.fill('876');
   await height.press('Tab');
   await page.getByRole('button', { name: 'ライブラリに登録', exact: false }).click();
-  await page.getByRole('button', { name: '検証作品を配置', exact: true }).click();
+  await page.getByRole('dialog', { name: '作品を登録', exact: true }).waitFor({ state: 'hidden' });
+  await placeOnPlan(page, '検証作品', 50, 16000);
   assert(
     (await page.getByText('1,234', { exact: true }).count()) > 0,
     'uploaded art width missing',
@@ -116,15 +145,27 @@ try {
   await page.locator('#compare-select').selectOption('layout-1');
   assert((await page.locator('.ghost-art').count()) === 5, 'comparison overlay missing');
   await page.getByRole('button', { name: '歩く', exact: true }).click();
-  await page.waitForTimeout(400);
+  await page.waitForFunction(
+    (spawnZ) =>
+      Number(document.querySelector('.plan-panel svg.plan-svg')?.getAttribute('data-camera-z')) ===
+      spawnZ,
+    DEFAULT_BUILDING.length - 8000,
+  );
   const startZ = Number(
     await page.locator('.plan-panel svg.plan-svg').getAttribute('data-camera-z'),
   );
   await page.locator('canvas').focus();
   await page.keyboard.down('KeyW');
-  await page.waitForTimeout(800);
-  await page.keyboard.up('KeyW');
-  await page.waitForTimeout(300);
+  try {
+    await page.waitForFunction(
+      (start) =>
+        Number(document.querySelector('.plan-panel svg.plan-svg')?.getAttribute('data-camera-z')) <
+        start - 100,
+      startZ,
+    );
+  } finally {
+    await page.keyboard.up('KeyW');
+  }
   const endZ = Number(await page.locator('.plan-panel svg.plan-svg').getAttribute('data-camera-z'));
   assert(endZ < startZ - 100, 'W did not move camera forward');
   assert((await page.getByText('WALKTHROUGH', { exact: false }).count()) > 0, 'walk mode missing');
@@ -213,7 +254,7 @@ try {
   const partId = await page.locator('.plan-partition').getAttribute('data-partition-id');
   // Place works on both sides; preserve their local coordinates when rotating the wall.
   await page.getByRole('button', { name: '作品を選んで、この面に配置', exact: true }).click();
-  await page.getByRole('button', { name: '静かな地平 / サンプルを配置', exact: true }).click();
+  await placeOnPlan(page, '静かな地平 / サンプル', 5000, rail.z1 - 120);
   assert(
     (await page.getByRole('combobox', { name: '配置する壁面' }).inputValue()) ===
       `partition:${partId}:front`,
@@ -223,7 +264,7 @@ try {
   await page.locator('.partition-card').first().click();
   await page.getByRole('button', { name: '裏面', exact: true }).click();
   await page.getByRole('button', { name: '作品を選んで、この面に配置', exact: true }).click();
-  await page.getByRole('button', { name: 'かたちの対話 / サンプルを配置', exact: true }).click();
+  await placeOnPlan(page, 'かたちの対話 / サンプル', 5000, rail.z1 + 120);
   assert(
     (await page.getByRole('combobox', { name: '配置する壁面' }).inputValue()) ===
       `partition:${partId}:back`,
