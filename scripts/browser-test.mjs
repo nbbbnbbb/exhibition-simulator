@@ -3,7 +3,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import * as THREE from 'three';
 import { DEFAULT_BUILDING } from '../src/domain.js';
-import { placeOnPlan } from './placement-test-helpers.mjs';
+import { placeOnPlan, waitProject } from './placement-test-helpers.mjs';
 // Use the bundled Playwright when available; no browser download is needed on Windows.
 let playwright;
 try {
@@ -28,7 +28,7 @@ const assert = (value, message) => {
 };
 await fs.mkdir('test-results', { recursive: true });
 try {
-  await page.goto('http://127.0.0.1:5173', { waitUntil: 'networkidle' });
+  await page.goto(process.env.APP_URL || 'http://127.0.0.1:5173', { waitUntil: 'networkidle' });
   await page.getByRole('heading', { name: '展示を、空間で考える。' }).waitFor();
   await page.getByText('保存済み', { exact: false }).first().waitFor();
   assert((await page.locator('canvas').count()) === 1, '3D canvas missing');
@@ -45,23 +45,14 @@ try {
   const s = page.getByTestId('position-s');
   await s.fill('6250');
   await s.press('Tab');
-  await page.waitForFunction(async () => {
-    const db = await new Promise((resolve, reject) => {
-      const r = indexedDB.open('ma-exhibition-v1', 1);
-      r.onsuccess = () => resolve(r.result);
-      r.onerror = () => reject(r.error);
-    });
-    try {
-      return await new Promise((resolve) => {
-        const r = db.transaction('projects').objectStore('projects').get('current');
-        r.onsuccess = () => resolve(r.result?.layouts[0]?.placements[0]?.s === 6250);
-      });
-    } finally {
-      db.close();
-    }
-  });
+  await waitProject(page, (project) => project.layouts[0].placements[0].s === 6250);
+  await page.getByText('保存済み', { exact: false }).first().waitFor();
   await page.reload({ waitUntil: 'networkidle' });
-  await page.locator('.plan-art').first().locator('line').last().click({ force: true });
+  await page.getByText('保存済み', { exact: false }).first().waitFor();
+  await page.waitForFunction(() =>
+    document.querySelector('.plan-art[data-placement-id="p-1"] title')?.textContent.includes('6,250 mm'),
+  );
+  await page.locator('.plan-art[data-placement-id="p-1"]').locator('line').last().click({ force: true });
   await page.getByTestId('position-s').waitFor();
   await page.waitForFunction(
     () => document.querySelector('[data-testid=position-s]')?.value === '6250',

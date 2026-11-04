@@ -1801,7 +1801,7 @@ function App() {
         >
           <div className="lighting-sources">
             <img
-              src="/references/site-context.png"
+              src={`${import.meta.env.BASE_URL}references/site-context.png`}
               alt="ユーザー提供：ギャラリーと芸術資料館、南側の建物を示す配置図"
             />
             <div>
@@ -2265,13 +2265,13 @@ function BuildingModal({ building, onClose, onSave }) {
         </>
       ) : (
         <div className="reference-panel">
-          <a href="/references/1_100.pdf" target="_blank" rel="noreferrer">
+          <a href={`${import.meta.env.BASE_URL}references/1_100.pdf`} target="_blank" rel="noreferrer">
             <Icon name="download" />
             添付の1/100図面を開く
           </a>
           <div>
-            <img src="/references/interior-01.png" alt="主展示室の梁と照明の参考写真" />
-            <img src="/references/interior-02.png" alt="中二階と柱の参考写真" />
+            <img src={`${import.meta.env.BASE_URL}references/interior-01.png`} alt="主展示室の梁と照明の参考写真" />
+            <img src={`${import.meta.env.BASE_URL}references/interior-02.png`} alt="中二階と柱の参考写真" />
           </div>
           <p className="muted">写真は建築形態・素材の参照です。写真から実寸を確定していません。</p>
         </div>
