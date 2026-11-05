@@ -240,3 +240,30 @@ export function structuralBounds(member) {
     },
   };
 }
+
+// Shared by the rendered windows and the daylight visibility calculation (mm).
+export function glazingFrames(b) {
+  return [0, b.length].flatMap((z, side) => {
+    const frames = [];
+    for (let x = 0; x <= b.mainWidth; x += 1120)
+      frames.push({
+        id: `window-${side}-mullion-${x}`,
+        x,
+        y: b.height / 2,
+        z,
+        width: 45,
+        height: b.height,
+        depth: 45,
+      });
+    frames.push({
+      id: `window-${side}-transom`,
+      x: b.mainWidth / 2,
+      y: 2400,
+      z,
+      width: b.mainWidth,
+      height: 65,
+      depth: 60,
+    });
+    return frames;
+  });
+}

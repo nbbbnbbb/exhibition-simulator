@@ -1,5 +1,12 @@
-import { useMemo, useState, useEffect } from 'react';
-import { solarPosition, solarState, sampleIlluminance, lightingDefaults } from './lighting.js';
+import { useMemo, useState, useEffect, useId } from 'react';
+import {
+  solarPosition,
+  solarState,
+  sampleIlluminance,
+  lightingDefaults,
+  compassDirection,
+  directSunExposure,
+} from './lighting.js';
 import { positionOnWall } from './domain.js';
 
 const n = (value) => Math.round(value).toLocaleString('ja-JP');
@@ -107,6 +114,110 @@ function SolarDiagram({ lighting: l }) {
     </svg>
   );
 }
+function SolarCompass({ lighting: l, sun }) {
+  const id = useId();
+  const angle = (sun.azimuth * Math.PI) / 180;
+  const dx = Math.sin(angle),
+    dy = -Math.cos(angle);
+  const active = l.daylight && sun.normalLux > 0;
+  const shadow = (sun.azimuth + 180) % 360;
+  return (
+    <div className="solar-compass" data-testid="solar-compass">
+      <svg viewBox="0 0 120 120" role="img" aria-label="真北を上にした太陽・光・影の方向">
+        <defs>
+          <marker
+            id={`${id}-light`}
+            viewBox="0 0 10 10"
+            refX="9"
+            refY="5"
+            markerWidth="5"
+            markerHeight="5"
+            orient="auto-start-reverse"
+          >
+            <path d="M0 0L10 5L0 10Z" fill="#b48b4e" />
+          </marker>
+          <marker
+            id={`${id}-shadow`}
+            viewBox="0 0 10 10"
+            refX="9"
+            refY="5"
+            markerWidth="5"
+            markerHeight="5"
+            orient="auto-start-reverse"
+          >
+            <path d="M0 0L10 5L0 10Z" fill="#697c60" />
+          </marker>
+        </defs>
+        <circle cx="60" cy="60" r="39" fill="none" stroke="#dce3d1" />
+        <path d="M60 23V97M23 60H97" stroke="#e0e5d9" />
+        <text x="60" y="12" textAnchor="middle">
+          北
+        </text>
+        <text x="109" y="63" textAnchor="middle">
+          東
+        </text>
+        <text x="60" y="115" textAnchor="middle">
+          南
+        </text>
+        <text x="11" y="63" textAnchor="middle">
+          西
+        </text>
+        <g opacity={active ? 1 : 0.4}>
+          <line
+            x1={60 + dx * 29}
+            y1={60 + dy * 29}
+            x2="60"
+            y2="60"
+            stroke="#b48b4e"
+            strokeWidth="2"
+            markerEnd={`url(#${id}-light)`}
+          />
+          <line
+            x1="60"
+            y1="60"
+            x2={60 - dx * 34}
+            y2={60 - dy * 34}
+            stroke="#697c60"
+            strokeWidth="3"
+            strokeDasharray="3 2"
+            markerEnd={`url(#${id}-shadow)`}
+          />
+          <circle cx={60 + dx * 34} cy={60 + dy * 34} r="5" fill="#c5a162" />
+        </g>
+      </svg>
+      <div>
+        <p data-testid="sun-direction">
+          太陽：{compassDirection(sun.azimuth)} {sun.azimuth.toFixed(1)}°
+        </p>
+        <p>光：{compassDirection(sun.azimuth)}から室内へ</p>
+        <p data-testid="shadow-direction">
+          影：{compassDirection(shadow)} {shadow.toFixed(1)}°へ
+        </p>
+        <small>
+          {active ? '水平面の影の向き。低い太陽ほど長い影。' : '直達光なし。方向は太陽位置の目安。'}
+        </small>
+      </div>
+    </div>
+  );
+}
+function exposureDescription(exposure) {
+  switch (exposure.status) {
+    case 'lit':
+      return `${exposure.window === 'north' ? '北' : '南'}窓から直射が届く（入射角を反映）`;
+    case 'occluded':
+      return `${exposure.occluder.name}による影`;
+    case 'surroundings':
+      return '南側の周辺建物が直射を遮蔽';
+    case 'back-facing':
+      return 'この面は太陽の反対向きのため直射なし';
+    case 'night':
+      return '太陽が地平線以下のため直射なし';
+    case 'no-window':
+      return '太陽方向に採光窓がないため直射なし';
+    default:
+      return '自然光OFF、または直達光の強度・透過率が0';
+  }
+}
 export default function LightingPanel({
   project,
   layout,
@@ -144,10 +255,22 @@ export default function LightingPanel({
       },
       normal: { x: 0, y: 1, z: 0 },
     };
-  }, [placement, artwork, wall?.id, project.building]);
+  }, [placement, artwork, wall, project.building]);
   const lux = useMemo(
     () =>
       sampleIlluminance(
+        probe.point,
+        probe.normal,
+        l,
+        project.building,
+        layout.partitions,
+        project.rails,
+      ),
+    [probe, l, project.building, layout.partitions, project.rails],
+  );
+  const exposure = useMemo(
+    () =>
+      directSunExposure(
         probe.point,
         probe.normal,
         l,
@@ -162,7 +285,9 @@ export default function LightingPanel({
     <div className="lighting-panel" data-testid="lighting-panel">
       <div className="lighting-intro">
         <span className="eyebrow">GALLERY @KCUA / LIGHT STUDY</span>
-        <p>真北＝図面上端。閉じた天井と、北・南のガラス窓を前提に計算します。</p>
+        <p>
+          真北＝図面上端。太陽の方角・高さと、天井・外壁・窓枠・梁・柱・中二階・可動壁による影を反映します。
+        </p>
         <div className="light-presets">
           <button onClick={() => onChange({ daylight: true, spots: false, rails: false })}>
             自然光のみ
@@ -249,9 +374,10 @@ export default function LightingPanel({
             太陽高度<strong data-testid="sun-altitude">{sun.altitude.toFixed(1)}°</strong>
           </span>
           <span>
-            方位角<strong>{sun.azimuth.toFixed(1)}°</strong>
+            方位角<strong data-testid="sun-azimuth">{sun.azimuth.toFixed(1)}°</strong>
           </span>
         </div>
+        <SolarCompass lighting={l} sun={sun} />
         <p className="sun-state" data-testid="sun-state">
           {!l.daylight
             ? '自然光 OFF'
@@ -380,6 +506,9 @@ export default function LightingPanel({
           <span className="source-tag estimate">参考値</span>
         </div>
         <p className="probe-name">{probe.name}</p>
+        <p className="probe-sun-state" data-testid="probe-sun-state" data-status={exposure.status}>
+          直達光：{exposureDescription(exposure)}
+        </p>
         <div className="lux-total">
           <strong data-testid="probe-lux">{n(lux.total)}</strong>
           <span>lx</span>

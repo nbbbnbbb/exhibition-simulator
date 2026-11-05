@@ -81,6 +81,18 @@ try {
     (await page.getByTestId('sun-state').innerText()).includes('遮蔽中'),
     'south obstruction default',
   );
+  assert(
+    (await page.getByTestId('sun-direction').innerText()).includes('南'),
+    'noon sun direction',
+  );
+  assert(
+    (await page.getByTestId('shadow-direction').innerText()).includes('北'),
+    'noon shadow direction',
+  );
+  assert(
+    (await page.getByTestId('probe-sun-state').innerText()).includes('周辺建物'),
+    'probe obstruction reason',
+  );
   await page.getByRole('button', { name: '冬至', exact: true }).click();
   await settle();
   assert(
@@ -165,10 +177,33 @@ try {
     Number(await page.locator('.scene-host').getAttribute('data-direct-sun-lux')) > 0,
     'morning sun disabled',
   );
+  assert(
+    (await page.getByTestId('sun-direction').innerText()).includes('北東'),
+    'morning sun compass',
+  );
+  assert(
+    (await page.getByTestId('shadow-direction').innerText()).includes('南西'),
+    'morning shadow compass',
+  );
+  await page.getByLabel('日照の時刻', { exact: true }).fill('18:30');
+  await settle();
+  assert(
+    (await page.getByTestId('sun-direction').innerText()).includes('北西'),
+    'evening sun compass',
+  );
+  assert(
+    (await page.getByTestId('shadow-direction').innerText()).includes('南東'),
+    'evening shadow compass',
+  );
+  await page.getByTestId('solar-compass').screenshot({ path: 'test-results/solar-directions.png' });
   await page.getByLabel('日照の時刻', { exact: true }).fill('00:00');
   await settle();
   assert((await page.getByTestId('sun-state').innerText()).includes('夜間'), 'night status');
   assert((await page.getByTestId('probe-lux').innerText()) === '0', 'night daylight not zero');
+  assert(
+    (await page.getByTestId('solar-compass').innerText()).includes('直達光なし'),
+    'night compass status',
+  );
   // Settings belong to each plan and survive clone, independent edits, export and reload.
   await page.getByRole('button', { name: /^プラン \d/ }).click();
   await page.getByRole('button', { name: '現在のプランを複製', exact: true }).click();
@@ -214,6 +249,9 @@ try {
       'south glazing admits direct sunlight',
       'south obstruction blocks sunlight',
       'summer early north sunlight',
+      'morning/evening sunlight and opposite shadow compass',
+      'probe reports surrounding-building occlusion',
+      'compass indicates no direct light at night',
       'night illumination zero',
       'per-plan lighting independence',
       'JSON and IndexedDB round trip',

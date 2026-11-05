@@ -4,7 +4,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { LightingRig } from './LightingRig.js';
-import { ceilingStructure } from './architecture.js';
+import { ceilingStructure, glazingFrames } from './architecture.js';
 import {
   pickWall,
   previewArtworkAddition,
@@ -1525,22 +1525,9 @@ export const Scene = forwardRef(function Scene(
       skirting.position.z += w.normal.z * 0.003;
       skirting.rotation.copy(mesh.rotation);
       e.world.add(skirting);
-      if (!w.hangable) {
-        for (let s = 0; s <= w.length; s += 1120) {
-          box(
-            e.world,
-            45,
-            b.height,
-            45,
-            w.start.x + w.tangent.x * s,
-            b.height / 2,
-            w.start.z + w.tangent.z * s,
-            '#65716d',
-          );
-        }
-        box(e.world, b.mainWidth, 65, 60, b.mainWidth / 2, 2400, w.start.z, '#65716d');
-      }
     }
+    for (const f of glazingFrames(b))
+      box(e.world, f.width, f.height, f.depth, f.x, f.y, f.z, '#65716d');
     {
       for (const r of project.rails) {
         const line = new THREE.Line(

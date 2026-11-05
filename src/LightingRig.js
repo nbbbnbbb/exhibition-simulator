@@ -256,9 +256,16 @@ export class LightingRig {
       !previous ||
       becameLit ||
       skyBecameLit ||
-      ['date', 'minutes', 'latitude', 'longitude', 'sunSoftness', 'spotSoftness', 'spotAngle'].some(
-        (k) => previous[k] !== l[k],
-      )
+      [
+        'date',
+        'minutes',
+        'latitude',
+        'longitude',
+        'utcOffset',
+        'sunSoftness',
+        'spotSoftness',
+        'spotAngle',
+      ].some((k) => previous[k] !== l[k])
     )
       this.renderer.shadowMap.needsUpdate = true;
     return sun;

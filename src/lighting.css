@@ -158,6 +158,38 @@
   border-radius: 3px;
   margin-top: 10px;
 }
+.solar-compass {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 12px;
+}
+.solar-compass svg {
+  width: 105px;
+  flex-shrink: 0;
+}
+.solar-compass text {
+  font-size: 10px;
+  fill: #718268;
+}
+.solar-compass p,
+.solar-compass small,
+.probe-sun-state {
+  color: #718268;
+  font-size: 9px;
+  line-height: 1.8;
+}
+.solar-compass small {
+  display: block;
+  color: #8b9781;
+  margin-top: 5px;
+}
+.probe-sun-state {
+  margin-top: 7px;
+  padding: 7px 8px;
+  background: #eff0e2;
+  border-radius: 3px;
+}
 .light-slider {
   display: block;
   margin-top: 17px;
