@@ -29,7 +29,7 @@ const assert = (value, message) => {
 await fs.mkdir('test-results', { recursive: true });
 try {
   await page.goto(process.env.APP_URL || 'http://127.0.0.1:5173', { waitUntil: 'networkidle' });
-  await page.getByRole('heading', { name: '展示を、空間で考える。' }).waitFor();
+  await page.locator('.view-toolbar').waitFor();
   await page.getByText('保存済み', { exact: false }).first().waitFor();
   assert((await page.locator('canvas').count()) === 1, '3D canvas missing');
   // These two editions are used on both sides of a copied partition later.
@@ -42,6 +42,11 @@ try {
   }
   await page.screenshot({ path: 'test-results/01-workspace.png', fullPage: true });
   // Committing a precise numeric edit updates both the document and saved storage.
+  await page
+    .locator('.plan-art[data-placement-id="p-1"]')
+    .locator('line')
+    .last()
+    .click({ force: true });
   const s = page.getByTestId('position-s');
   await s.fill('6250');
   await s.press('Tab');
