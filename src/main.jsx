@@ -12,6 +12,8 @@ import ArtworkArrangement from './ArtworkArrangement.jsx';
 import ArtworkBatchDialog from './ArtworkBatchDialog.jsx';
 import ArtworkDetails from './ArtworkDetails.jsx';
 import ObjectContextMenu from './ObjectContextMenu.jsx';
+import { SceneObjectLibrary, SceneObjectInspector } from './SceneObjects.jsx';
+import { newSceneObject, validateSceneObject, silhouettes } from './sceneObjects.js';
 import './object-actions.css';
 import {
   SteelFrameLibrary,
@@ -256,6 +258,7 @@ function App() {
       }
     });
   const [selectedSteelFrame, setSelectedSteelFrame] = useState(null);
+  const [selectedSceneObject, setSelectedSceneObject] = useState(null);
   const [contextTarget, setContextTarget] = useState(null);
   const closeContextMenu = useCallback(() => setContextTarget(null), []);
   const [placingPartition, setPlacingPartition] = useState(false),
@@ -348,6 +351,9 @@ function App() {
     activePart = parts.find((q) => q.id === selectedPartition);
   const steelFrames = layout.steelFrames || [],
     activeSteelFrame = steelFrames.find((f) => f.id === selectedSteelFrame);
+  const sceneObjects = layout.sceneObjects || [];
+  const activeSceneObject = sceneObjects.find((o) => o.id === selectedSceneObject);
+  useEffect(() => setSelectedSceneObject(null), [project.activeLayoutId]);
   useEffect(() => setSelectedSteelFrame(null), [project.activeLayoutId]);
   useEffect(() => setSelectedSteelLineFace(null), [project.activeLayoutId]);
   const steelLineFaces = useMemo(() => detectSteelLineFaces(steelFrames), [steelFrames]),
@@ -404,6 +410,7 @@ function App() {
     setSelected([]);
     setSelectedPartition(null);
     setSelectedSteelFrame(null);
+    setSelectedSceneObject(null);
     setCompareId('');
   }, []);
   function markCloudFile(file) {
@@ -556,6 +563,7 @@ function App() {
     );
   }, []);
   const select = useCallback((id, multi = false) => {
+    setSelectedSceneObject(null);
     cancelPartitionPlacement();
     setSelectedSteelLineFace(null);
     cancelSteelLine();
@@ -566,6 +574,7 @@ function App() {
     );
   }, []);
   const selectPartition = useCallback((id) => {
+    setSelectedSceneObject(null);
     cancelPartitionPlacement();
     setSelectedSteelLineFace(null);
     cancelSteelLine();
@@ -574,6 +583,7 @@ function App() {
     setSelectedPartition(id);
   }, []);
   const selectSteelFrame = useCallback((id) => {
+    setSelectedSceneObject(null);
     cancelPartitionPlacement();
     setSelectedSteelLineFace(null);
     cancelSteelLine();
@@ -591,10 +601,12 @@ function App() {
     if (target.type === 'artwork') select(target.id);
     else if (target.type === 'partition') selectPartition(target.id);
     else if (target.type === 'steel-line-face') selectSteelLineFace(target.id);
+    else if (target.type === 'scene-object') selectSceneObject(target.id);
     else selectSteelFrame(target.id);
     setContextTarget(target);
   }, []);
   const selectSteelLineFace = useCallback((id) => {
+    setSelectedSceneObject(null);
     cancelPartitionPlacement();
     cancelSteelLine();
     cancelPlacement();
@@ -718,6 +730,46 @@ function App() {
     });
     setSelectedSteelFrame(null);
   }
+  const selectSceneObject = useCallback((id) => {
+    cancelPlacement();
+    cancelPartitionPlacement();
+    cancelSteelLine();
+    setSelected([]);
+    setSelectedPartition(null);
+    setSelectedSteelFrame(null);
+    setSelectedSteelLineFace(null);
+    setSelectedSceneObject(id);
+    setInspectorTab('placement');
+  }, []);
+  const changeSceneObject = useCallback(
+    (id, changes) =>
+      update((d) => {
+        const objects = d.layouts.find((l) => l.id === d.activeLayoutId).sceneObjects;
+        const index = objects.findIndex((o) => o.id === id);
+        if (index >= 0) objects[index] = validateSceneObject({ ...objects[index], ...changes });
+      }),
+    [],
+  );
+  function addSceneObject(kind, options) {
+    const object = newSceneObject(kind, project.building, options);
+    if (kind === 'silhouette')
+      object.name = silhouettes.find((s) => s.id === object.silhouetteId).name;
+    update((d) => d.layouts.find((l) => l.id === d.activeLayoutId).sceneObjects.push(object));
+    selectSceneObject(object.id);
+    setMode('orbit');
+  }
+  function removeSceneObject(id) {
+    update((d) => {
+      const l = d.layouts.find((l) => l.id === d.activeLayoutId);
+      l.sceneObjects = l.sceneObjects.filter((o) => o.id !== id);
+    });
+    setSelectedSceneObject(null);
+  }
+  const objectControls = {
+    selectedSceneObject,
+    onSelectSceneObject: selectSceneObject,
+    onSceneObjectMove: changeSceneObject,
+  };
   const move = useCallback(
     (id, changes) =>
       update((d) => {
@@ -769,6 +821,10 @@ function App() {
         e.preventDefault();
         removeSteelFrame(selectedSteelFrame);
       }
+      if (e.code === 'Delete' && selectedSceneObject) {
+        e.preventDefault();
+        removeSceneObject(selectedSceneObject);
+      }
       if (e.code === 'Escape') {
         cancelPartitionPlacement();
         setSelectedSteelLineFace(null);
@@ -777,6 +833,7 @@ function App() {
         setSelected([]);
         setSelectedPartition(null);
         setSelectedSteelFrame(null);
+        setSelectedSceneObject(null);
         setMode('orbit');
       }
       if (
@@ -791,7 +848,17 @@ function App() {
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
-  }, [modal, selected, selectedSteelFrame, drawingSteelLines, steelLinePhase, undo, redo, remove]);
+  }, [
+    modal,
+    selected,
+    selectedSteelFrame,
+    selectedSceneObject,
+    drawingSteelLines,
+    steelLinePhase,
+    undo,
+    redo,
+    remove,
+  ]);
   function addArtwork(artworkId, batch = null) {
     cancelPartitionPlacement();
     cancelSteelLine();
@@ -1093,6 +1160,12 @@ function App() {
               鉄骨 <small>{steelFrames.length}</small>
             </button>
             <button
+              className={libraryTab === 'objects' ? 'active' : ''}
+              onClick={() => setLibraryTab('objects')}
+            >
+              形状・人 <small>{sceneObjects.length}</small>
+            </button>
+            <button
               className={libraryTab === 'layouts' ? 'active' : ''}
               onClick={() => setLibraryTab('layouts')}
             >
@@ -1235,6 +1308,13 @@ function App() {
                 </span>
               </div>
             </>
+          ) : libraryTab === 'objects' ? (
+            <SceneObjectLibrary
+              objects={sceneObjects}
+              selected={selectedSceneObject}
+              onSelect={selectSceneObject}
+              onAdd={addSceneObject}
+            />
           ) : libraryTab === 'steel' ? (
             <SteelFrameLibrary
               project={project}
@@ -1523,6 +1603,7 @@ function App() {
               style={view === 'plan' ? { display: 'none' } : undefined}
             >
               <Scene
+                {...objectControls}
                 ref={scene}
                 project={project}
                 selected={selected}
@@ -1603,6 +1684,7 @@ function App() {
               {view === 'three' && (
                 <div className="mini-map">
                   <Plan
+                    {...objectControls}
                     project={project}
                     selected={selected}
                     compare={compare}
@@ -1639,6 +1721,7 @@ function App() {
                 <span className="scale-badge">単位 mm</span>
               </div>
               <Plan
+                {...objectControls}
                 project={project}
                 selected={selected}
                 compare={compare}
@@ -1844,6 +1927,31 @@ function App() {
                 setMode('walk');
                 setView('three');
                 scene.current?.windowView(side);
+              }}
+            />
+          ) : activeSceneObject ? (
+            <SceneObjectInspector
+              key={activeSceneObject.id}
+              object={activeSceneObject}
+              onChange={(changes) => changeSceneObject(activeSceneObject.id, changes)}
+              onRemove={() => removeSceneObject(activeSceneObject.id)}
+              onDuplicate={() => {
+                const copy = {
+                  ...structuredClone(activeSceneObject),
+                  id: uid(),
+                  name: `${activeSceneObject.name} コピー`,
+                  x: activeSceneObject.x + 500,
+                  z: activeSceneObject.z + 500,
+                };
+                update((d) =>
+                  d.layouts.find((l) => l.id === d.activeLayoutId).sceneObjects.push(copy),
+                );
+                selectSceneObject(copy.id);
+              }}
+              onFocus={() => {
+                setMode('orbit');
+                setView('three');
+                scene.current?.focusSceneObject(activeSceneObject.id);
               }}
             />
           ) : drawingSteelLines && steelLinePhase === 'plane' ? (
@@ -2102,12 +2210,15 @@ function App() {
             contextTarget.type === 'steel-line-face' &&
             layout.steelLineMembranes.some((m) => m.faceId === contextTarget.id) &&
             steelLineFaces.find((f) => f.id === contextTarget.id);
+          const sceneObject =
+            contextTarget.type === 'scene-object' &&
+            sceneObjects.find((o) => o.id === contextTarget.id);
           const membraneFace =
             contextTarget.type === 'steel-membrane' &&
             steelFrame &&
             steelFrame.membrane.faces.includes(contextTarget.faceIndex) &&
             frameGeometry(steelFrame, project).shape.faces[contextTarget.faceIndex];
-          if (!art && !partition && !steelFrame && !steelLineFace) return null;
+          if (!art && !partition && !steelFrame && !steelLineFace && !sceneObject) return null;
           if (contextTarget.type === 'steel-membrane' && !membraneFace) return null;
           return (
             <ObjectContextMenu
@@ -2118,6 +2229,7 @@ function App() {
               steelFrame={steelFrame}
               steelLineFace={steelLineFace}
               membraneFace={membraneFace}
+              sceneObject={sceneObject}
               onClose={closeContextMenu}
               onInfo={() => {
                 closeContextMenu();
@@ -2125,7 +2237,8 @@ function App() {
               }}
               onDelete={() => {
                 closeContextMenu();
-                if (partition) setModal({ type: 'delete-partition', id: partition.id });
+                if (sceneObject) removeSceneObject(sceneObject.id);
+                else if (partition) setModal({ type: 'delete-partition', id: partition.id });
                 else if (steelLineFace) {
                   changeSteelLineFace(steelLineFace.id, { enabled: false });
                   tell('この面の膜を削除しました。輪郭のラインは残ります');

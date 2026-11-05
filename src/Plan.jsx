@@ -10,6 +10,7 @@ import { artworkLabelRows } from './artworkLabels.js';
 import { frameGeometry, validateFrame } from './steelFrames.js';
 import { detectSteelLineFaces } from './steelLineFaces.js';
 import { pickPartitionRail, previewPartition } from './partitionPlacement.js';
+import { objectFootprint, validateSceneObject } from './sceneObjects.js';
 export default function Plan({
   project,
   selected,
@@ -24,6 +25,9 @@ export default function Plan({
   onSelectPartition,
   onPartitionMove,
   selectedSteelFrame,
+  selectedSceneObject,
+  onSelectSceneObject,
+  onSceneObjectMove,
   onSelectSteelFrame,
   onSteelFrameMove,
   selectedSteelLineFace,
@@ -60,6 +64,7 @@ export default function Plan({
   const extentPoints = [
     ...polygon(b).map(([x, z]) => [x, z]),
     ...steelPoints.map(([x, , z]) => [x, z]),
+    ...[...(layout.sceneObjects || []), ...(compare?.sceneObjects || [])].flatMap(objectFootprint),
   ];
   const minX = Math.min(...extentPoints.map((p) => p[0])),
     maxX = Math.max(...extentPoints.map((p) => p[0]));
@@ -198,12 +203,13 @@ export default function Plan({
     };
     e.currentTarget.setPointerCapture(e.pointerId);
   };
-  const steelDown = (e, f) => {
+  const steelDown = (e, f, type = 'steel') => {
     if (e.button !== 0) return;
     e.stopPropagation();
-    onSelectSteelFrame?.(f.id);
+    if (type === 'scene-object') onSelectSceneObject?.(f.id);
+    else onSelectSteelFrame?.(f.id);
     if (mini) return;
-    steelDrag.current = { f, start: point(e), element: e.currentTarget };
+    steelDrag.current = { f, type, start: point(e), element: e.currentTarget };
     e.currentTarget.setPointerCapture(e.pointerId);
   };
   const steelMove = (e) => {
@@ -218,7 +224,8 @@ export default function Plan({
       z: Math.round((d.f.z + pos.y - d.start.y) / step) * step,
     };
     try {
-      validateFrame(next, project);
+      if (d.type === 'scene-object') validateSceneObject(next);
+      else validateFrame(next, project);
       d.next = next;
       d.element.setAttribute('transform', `translate(${next.x - d.f.x},${next.z - d.f.z})`);
     } catch {}
@@ -230,7 +237,10 @@ export default function Plan({
     e.stopPropagation();
     d.element.removeAttribute('transform');
     if (e.type === 'pointerup' && d.next && (d.next.x !== d.f.x || d.next.z !== d.f.z))
-      onSteelFrameMove?.(d.f.id, { x: d.next.x, z: d.next.z });
+      (d.type === 'scene-object' ? onSceneObjectMove : onSteelFrameMove)?.(d.f.id, {
+        x: d.next.x,
+        z: d.next.z,
+      });
   };
   const move = (e) => {
     const d = drag.current;
@@ -281,6 +291,73 @@ export default function Plan({
       }
       onMoveEnd?.();
     } else if (d?.next && e.type === 'pointerup') onPartitionMove(d.p.id, d.next);
+  };
+  const sceneObject = (object, ghost = false) => {
+    const points = objectFootprint(object)
+      .map((p) => p.join(','))
+      .join(' ');
+    const thin =
+      object.kind === 'silhouette' ||
+      (object.kind === 'plane' && object.orientation === 'vertical');
+    return (
+      <g
+        key={object.id}
+        data-scene-object-id={object.id}
+        className="plan-scene-object"
+        opacity={ghost ? 0.3 : 1}
+        onPointerDown={ghost ? undefined : (e) => steelDown(e, object, 'scene-object')}
+        onPointerMove={ghost ? undefined : steelMove}
+        onPointerUp={ghost ? undefined : steelUp}
+        onPointerCancel={ghost ? undefined : steelUp}
+        onLostPointerCapture={ghost ? undefined : steelUp}
+        onContextMenu={
+          ghost
+            ? undefined
+            : (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onObjectContextMenu?.({
+                  type: 'scene-object',
+                  id: object.id,
+                  x: e.clientX,
+                  y: e.clientY,
+                });
+              }
+        }
+      >
+        <title>{object.name}</title>
+        <polygon
+          points={points}
+          fill={object.color}
+          fillOpacity={object.opacity}
+          stroke={
+            selectedSceneObject === object.id && !ghost ? '#b68246' : ghost ? '#ab7cba' : '#747a70'
+          }
+          strokeWidth={thin ? 65 : 35}
+        />
+        {!ghost && (
+          <polygon
+            points={points}
+            fill="transparent"
+            stroke="transparent"
+            strokeWidth={mini ? 400 : 200}
+            pointerEvents="all"
+          />
+        )}
+        {object.kind === 'silhouette' && (
+          <text
+            x={object.x}
+            y={object.z - 230}
+            textAnchor="middle"
+            fontSize={mini ? 300 : 200}
+            fill="#697064"
+            pointerEvents="none"
+          >
+            人
+          </text>
+        )}
+      </g>
+    );
   };
   const label = (tx, tz, text, rotate = 0) => (
     <text
@@ -714,6 +791,8 @@ export default function Plan({
       {detectSteelLineFaces(layout.steelFrames).map((face) => lineFace(face, layout))}
       {compare?.steelFrames?.map((f) => steel(f, true))}
       {layout.steelFrames?.map((f) => steel(f))}
+      {compare?.sceneObjects?.map((o) => sceneObject(o, true))}
+      {layout.sceneObjects?.map((o) => sceneObject(o))}
       {compare?.placements.map((p) => art(p, true))}
       {layout.placements.map((p) => art(p))}
       {!mini &&
