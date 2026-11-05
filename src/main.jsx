@@ -248,6 +248,16 @@ function App() {
   const [cloudPending, setCloudPending] = useState(null);
   const [cloudError, setCloudError] = useState('');
   const cloudNavigation = useRef(0);
+  useEffect(() => {
+    if (!cloudSession) return;
+    const remaining = cloudSession.expiresAt - Date.now();
+    if (remaining <= 0) {
+      setCloudSession(null);
+      return;
+    }
+    const timer = setTimeout(() => setCloudSession(null), remaining);
+    return () => clearTimeout(timer);
+  }, [cloudSession]);
   const [selectedPartition, setSelectedPartition] = useState(null),
     [partitionFace, setPartitionFace] = useState('front'),
     [showRails, setShowRails] = useState(() => {
@@ -2591,7 +2601,7 @@ function App() {
               </p>
               <h3>05 / 保存と持ち出し</h3>
               <p>
-                操作はIndexedDBへ自動保存。「クラウド保存」でGitHubの保存リストを開き、別名保存・上書き保存・URL共有ができます。保存を開くとURLに保存先が付きます。公開リポジトリでは画像も公開され、非公開の場合は開く側にもアクセス権が必要です。「書き出す」「開く」ではJSONでも持ち出せます。プランタブから設営CSVを書き出せます。
+                操作はIndexedDBへ自動保存。「クラウド保存」でこのリポジトリの保存リストを開き、GitHubログイン後に別名保存・上書き保存ができます。保存先とトークンの入力は不要です。保存を開くとURLに保存先が付き、ログインなしで共有できます。作品・画像と保存履歴も公開されます。「書き出す」「開く」ではJSONでも持ち出せます。
               </p>
               <h3>寸法について</h3>
               <p>

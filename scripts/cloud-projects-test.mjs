@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { chromium } from 'playwright';
+import { execFileSync } from 'node:child_process';
 import { storedProject, waitProject } from './placement-test-helpers.mjs';
 
 const browser = await chromium.launch({
@@ -9,13 +10,17 @@ const browser = await chromium.launch({
   headless: true,
   args: ['--enable-webgl', '--use-angle=swiftshader'],
 });
-const root = path.resolve('dist');
+const root = path.resolve('tmp/cloud-sign-in-test-build');
+execFileSync(process.execPath, ['node_modules/vite/bin/vite.js', 'build', '--outDir', root], {
+  env: { ...process.env, VITE_BASE_PATH: '/', VITE_GITHUB_AUTH_URL: 'https://auth.ma.test' },
+  stdio: 'pipe',
+});
 const output = path.resolve('test-results/cloud-projects');
 await fs.mkdir(output, { recursive: true });
 const files = new Map();
 let version = 0,
-  privateRepo = false;
-const token = 'fake-test-token-never-persist';
+  denyLogin = false;
+const token = 'ghu_fake_test_token_never_persist';
 const errors = [];
 const checks = [];
 const check = (name) => {
@@ -25,6 +30,7 @@ const check = (name) => {
 async function context() {
   const ctx = await browser.newContext({
     viewport: { width: 1600, height: 1080 },
+    deviceScaleFactor: 0.75,
     permissions: ['clipboard-read', 'clipboard-write'],
   });
   await ctx.route('http://127.0.0.1:5173/**', async (route) => {
@@ -50,7 +56,10 @@ async function context() {
   await ctx.route('https://api.github.com/**', async (route) => {
     const request = route.request(),
       url = new URL(request.url());
-    const endpoint = decodeURIComponent(url.pathname).replace('/repos/gallery/exhibitions', '');
+    const endpoint = decodeURIComponent(url.pathname).replace(
+      '/repos/nbbbnbbb/exhibition-simulator',
+      '',
+    );
     const headers = {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Headers': '*',
@@ -65,11 +74,10 @@ async function context() {
       });
     if (request.method() === 'OPTIONS') return reply({});
     const authorized = request.headers().authorization === `Bearer ${token}`;
-    if (privateRepo && !authorized) return reply({}, 404);
     if (!endpoint)
       return reply({
         default_branch: 'main',
-        private: privateRepo,
+        private: false,
         permissions: { push: authorized },
       });
     if (endpoint.startsWith('/branches/')) return reply({ commit: { sha: `commit-${version}` } });
@@ -100,6 +108,20 @@ async function context() {
       return files.has(filePath) ? reply(files.get(filePath)) : reply({}, 404);
     }
     throw new Error(`Unexpected API request: ${request.method()} ${endpoint}`);
+  });
+  await ctx.route('https://auth.ma.test/api/authorize?**', async (route) => {
+    const params = new URL(route.request().url()).searchParams;
+    const data = {
+      type: 'ma:github-sign-in',
+      state: params.get('state'),
+      ...(denyLogin
+        ? { error: 'このGitHubアカウントには保存権限がありません' }
+        : { token, login: 'nbbbnbbb', expiresAt: Date.now() + 3600000 }),
+    };
+    await route.fulfill({
+      contentType: 'text/html; charset=utf-8',
+      body: `<script>window.opener.postMessage(${JSON.stringify(data)},${JSON.stringify(params.get('origin'))});</script>`,
+    });
   });
   const page = await ctx.newPage();
   page.setDefaultTimeout(30000);
@@ -173,13 +195,18 @@ try {
 
   await page.getByRole('textbox', { name: 'プロジェクト名', exact: true }).fill('共有する展覧会');
   await open(page);
-  await page.getByLabel('所有者（ユーザー／組織）', { exact: true }).fill('gallery');
-  await page.getByLabel('リポジトリ名', { exact: true }).fill('exhibitions');
-  await page.getByLabel('GitHubトークン', { exact: true }).fill(token);
-  await page.getByRole('button', { name: '接続する', exact: true }).click();
   await page.getByText('保存はまだありません。', { exact: false }).waitFor();
+  assert.equal(await page.getByLabel('GitHubトークン', { exact: true }).count(), 0);
+  assert.equal(await page.getByLabel('リポジトリ名', { exact: true }).count(), 0);
+  assert.equal(
+    await page.getByRole('button', { name: '別名で保存', exact: true }).isDisabled(),
+    true,
+  );
+  await page.getByRole('button', { name: 'GitHubでログイン', exact: true }).click();
+  await page.getByRole('button', { name: 'ログアウト', exact: true }).waitFor();
   await page.getByRole('button', { name: '別名で保存', exact: true }).click();
   await page.getByText('別の保存として保存しました', { exact: true }).waitFor();
+  await page.locator('.cloud-list[aria-busy="false"]').waitFor();
   assert.equal(files.size, 1);
   const url = page.url();
   assert.ok(url.includes('#github='));
@@ -197,7 +224,7 @@ try {
   assert.ok(!(await page.evaluate(() => JSON.stringify(localStorage))).includes(token));
   assert.ok(!JSON.stringify(await storedProject(page)).includes(token));
   await page.screenshot({ path: path.join(output, 'saved-list-and-url.png') });
-  check('GitHub接続・画像付き別名保存・保存リスト・URL自動付加・コピー・トークンの非永続化');
+  check('保存先固定・トークン入力なしのGitHubログイン・別名保存・一覧・URL・認証情報の非永続化');
 
   await close(page);
   await page.getByRole('textbox', { name: 'プロジェクト名', exact: true }).fill('上書きした展覧会');
@@ -235,29 +262,25 @@ try {
   await page.getByText('上書き保存しました', { exact: true }).waitFor();
   check('古いSHAでの上書きを拒否し、リストから開き直すと安全に保存できる');
 
-  privateRepo = true;
-  const privateView = await context();
-  await privateView.page.goto(url);
-  await privateView.page
-    .getByRole('dialog', { name: 'クラウド保存・保存リスト', exact: true })
-    .waitFor();
+  const reader = await context();
+  await reader.page.goto(url);
+  await ready(reader.page);
+  await open(reader.page);
+  await reader.page.getByRole('button', { name: '共有する展覧会を開く', exact: true }).waitFor();
   assert.equal(
-    await privateView.page.getByLabel('リポジトリ名', { exact: true }).inputValue(),
-    'exhibitions',
+    await reader.page.getByRole('button', { name: '上書き保存', exact: true }).isDisabled(),
+    true,
   );
-  await privateView.page.getByLabel('GitHubトークン', { exact: true }).fill(token);
-  await privateView.page
-    .getByRole('button', { name: '接続してURLの保存を開く', exact: true })
-    .click();
-  await privateView.page.getByRole('dialog').waitFor({ state: 'hidden' });
+  denyLogin = true;
+  await reader.page.getByRole('button', { name: 'GitHubでログイン', exact: true }).click();
+  await reader.page.getByRole('alert').filter({ hasText: '保存権限' }).waitFor();
   assert.equal(
-    await privateView.page
-      .getByRole('textbox', { name: 'プロジェクト名', exact: true })
-      .inputValue(),
-    '上書きした展覧会',
+    await reader.page.getByRole('button', { name: '別名で保存', exact: true }).isDisabled(),
+    true,
   );
-  check('非公開の共有URLは接続設定を表示し、権限のあるトークンで元のURLの状態を開く');
-  await privateView.ctx.close();
+  denyLogin = false;
+  check('公開保存は未ログインでも読めるが、権限のないログインは拒否して保存を無効のまま保持');
+  await reader.ctx.close();
 
   await close(page);
   await page.getByRole('textbox', { name: 'プロジェクト名', exact: true }).fill('別の展示');
