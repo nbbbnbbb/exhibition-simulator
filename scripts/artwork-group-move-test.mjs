@@ -4,7 +4,12 @@ import path from 'node:path';
 import { chromium } from 'playwright';
 import * as THREE from 'three';
 import { createProject, walls } from '../src/domain.js';
-import { pointOnPlan, storedProject, waitProject } from './placement-test-helpers.mjs';
+import {
+  addPartitionOnPlan,
+  pointOnPlan,
+  storedProject,
+  waitProject,
+} from './placement-test-helpers.mjs';
 
 const browser = await chromium.launch({
   channel: process.env.PLAYWRIGHT_CHANNEL || 'chrome',
@@ -284,7 +289,7 @@ try {
   await put();
   await select();
   await page.getByRole('button', { name: /^可動壁 \d/ }).click();
-  await page.getByRole('button', { name: '＋ 可動壁を追加', exact: true }).click();
+  await addPartitionOnPlan(page);
   let project = await waitProject(page, (p) => p.layouts[0].partitions.length === 1);
   const part = project.layouts[0].partitions[0],
     rail = project.rails.find((r) => r.id === part.railId);

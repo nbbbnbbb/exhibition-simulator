@@ -1,5 +1,6 @@
 import { chromium } from 'playwright';
 import fs from 'node:fs/promises';
+import { addPartitionOnPlan } from './placement-test-helpers.mjs';
 const browser = await chromium.launch({
   channel: 'chrome',
   headless: true,
@@ -98,10 +99,7 @@ try {
   await page.getByText('敷地の遮蔽条件を調整（推定）', { exact: true }).click();
   await field('南側の遮蔽高度', 0);
   await page.getByRole('button', { name: /^可動壁 \d/ }).click();
-  await page
-    .getByRole('combobox', { name: '追加先の配置ライン', exact: true })
-    .selectOption('rail-south-cross');
-  await page.getByRole('button', { name: '＋ 可動壁を追加', exact: true }).click();
+  await addPartitionOnPlan(page, 'rail-south-cross');
   await placement();
   await page.getByRole('button', { name: '歩く', exact: true }).click();
   await page.getByRole('button', { name: '3D', exact: true }).click();
