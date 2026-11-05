@@ -7,6 +7,10 @@ import ArtworkCatalog from './ArtworkCatalog.jsx';
 import PackingFields from './PackingFields.jsx';
 import ArtworkLabelOptions from './ArtworkLabelOptions.jsx';
 import ArtworkArrangement from './ArtworkArrangement.jsx';
+import ArtworkBatchDialog from './ArtworkBatchDialog.jsx';
+import ArtworkDetails from './ArtworkDetails.jsx';
+import ObjectContextMenu from './ObjectContextMenu.jsx';
+import './object-actions.css';
 import {
   SteelFrameLibrary,
   SteelFrameInspector,
@@ -37,6 +41,7 @@ import {
   mergeCatalog,
 } from './catalog.js';
 import { PartitionLibrary, PartitionInspector, RailEditor } from './Partitions.jsx';
+import { previewPartition } from './partitionPlacement.js';
 import {
   createProject,
   validateProject,
@@ -48,11 +53,10 @@ import {
   uid,
   format,
   fitPartition,
-  railGeometry,
 } from './domain.js';
 import { readProject, saveProject, readImage, download } from './storage.js';
 import {
-  newPlacement,
+  newArtworkBatch,
   movedPlacement,
   movedPlacements,
   assertInventoryChange,
@@ -245,6 +249,14 @@ function App() {
       }
     });
   const [selectedSteelFrame, setSelectedSteelFrame] = useState(null);
+  const [contextTarget, setContextTarget] = useState(null);
+  const closeContextMenu = useCallback(() => setContextTarget(null), []);
+  const [placingPartition, setPlacingPartition] = useState(false),
+    [partitionPreview, setPartitionPreview] = useState(null);
+  const cancelPartitionPlacement = useCallback(() => {
+    setPlacingPartition(false);
+    setPartitionPreview(null);
+  }, []);
   const [selectedSteelLineFace, setSelectedSteelLineFace] = useState(null);
   useEffect(() => {
     try {
@@ -267,6 +279,7 @@ function App() {
     [filter, setFilter] = useState(''),
     [libraryTab, setLibraryTab] = useState('artworks');
   const [placingArtworkId, setPlacingArtworkId] = useState(null),
+    [placingArtworkBatch, setPlacingArtworkBatch] = useState(null),
     [movingPlacementId, setMovingPlacementId] = useState(null),
     [movingPlacementIds, setMovingPlacementIds] = useState([]),
     [placementPreview, setPlacementPreview] = useState(null);
@@ -278,6 +291,12 @@ function App() {
   const steelLineTool = drawingSteelLines
     ? { ...steelLineSettings, start: steelLineStart, phase: steelLinePhase }
     : null;
+  useEffect(closeContextMenu, [project, view, mode, modal, libraryTab]);
+  useEffect(cancelPartitionPlacement, [project.activeLayoutId, modal, libraryTab]);
+  useEffect(() => {
+    if (mode !== 'orbit') cancelPartitionPlacement();
+  }, [mode]);
+  useEffect(() => setPartitionPreview(null), [view]);
   useEffect(() => {
     if (!steelSections(project).some((section) => section.id === steelLineSettings.sectionId))
       setSteelLineSettings((s) => ({ ...s, sectionId: 'c65' }));
@@ -339,6 +358,7 @@ function App() {
   );
   const cancelPlacement = useCallback(() => {
     setPlacingArtworkId(null);
+    setPlacingArtworkBatch(null);
     setMovingPlacementId(null);
     setMovingPlacementIds([]);
     setPlacementPreview(null);
@@ -358,7 +378,10 @@ function App() {
     setPlacementPreview(result);
     if (result?.valid) setNotice('');
   }, []);
-  useEffect(cancelPlacement, [project.activeLayoutId, modal]);
+  useEffect(cancelPlacement, [project.activeLayoutId]);
+  useEffect(() => {
+    if (modal) cancelPlacement();
+  }, [modal]);
   useEffect(() => {
     if (placingArtworkId && !placingArt) cancelPlacement();
   }, [placingArtworkId, placingArt]);
@@ -427,25 +450,24 @@ function App() {
       }),
     [],
   );
-  const undo = useCallback(
-    () =>
-      setHistory((h) =>
-        h.past.length
-          ? { past: h.past.slice(0, -1), present: h.past.at(-1), future: [h.present, ...h.future] }
-          : h,
-      ),
-    [],
-  );
-  const redo = useCallback(
-    () =>
-      setHistory((h) =>
-        h.future.length
-          ? { past: [...h.past, h.present], present: h.future[0], future: h.future.slice(1) }
-          : h,
-      ),
-    [],
-  );
+  const undo = useCallback(() => {
+    cancelPartitionPlacement();
+    setHistory((h) =>
+      h.past.length
+        ? { past: h.past.slice(0, -1), present: h.past.at(-1), future: [h.present, ...h.future] }
+        : h,
+    );
+  }, []);
+  const redo = useCallback(() => {
+    cancelPartitionPlacement();
+    setHistory((h) =>
+      h.future.length
+        ? { past: [...h.past, h.present], present: h.future[0], future: h.future.slice(1) }
+        : h,
+    );
+  }, []);
   const select = useCallback((id, multi = false) => {
+    cancelPartitionPlacement();
     setSelectedSteelLineFace(null);
     cancelSteelLine();
     setSelectedSteelFrame(null);
@@ -455,6 +477,7 @@ function App() {
     );
   }, []);
   const selectPartition = useCallback((id) => {
+    cancelPartitionPlacement();
     setSelectedSteelLineFace(null);
     cancelSteelLine();
     setSelectedSteelFrame(null);
@@ -462,6 +485,7 @@ function App() {
     setSelectedPartition(id);
   }, []);
   const selectSteelFrame = useCallback((id) => {
+    cancelPartitionPlacement();
     setSelectedSteelLineFace(null);
     cancelSteelLine();
     cancelPlacement();
@@ -470,7 +494,17 @@ function App() {
     setSelectedSteelFrame(id);
     setInspectorTab('placement');
   }, []);
+  const openObjectMenu = useCallback((target) => {
+    if (!target) return closeContextMenu();
+    cancelPlacement();
+    cancelPartitionPlacement();
+    cancelSteelLine();
+    if (target.type === 'artwork') select(target.id);
+    else selectPartition(target.id);
+    setContextTarget(target);
+  }, []);
   const selectSteelLineFace = useCallback((id) => {
+    cancelPartitionPlacement();
     cancelSteelLine();
     cancelPlacement();
     setSelected([]);
@@ -500,6 +534,7 @@ function App() {
     [update],
   );
   function startSteelLines(fromFrame) {
+    cancelPartitionPlacement();
     setSelectedSteelLineFace(null);
     cancelPlacement();
     setView('three');
@@ -644,6 +679,7 @@ function App() {
         removeSteelFrame(selectedSteelFrame);
       }
       if (e.code === 'Escape') {
+        cancelPartitionPlacement();
         setSelectedSteelLineFace(null);
         cancelSteelLine();
         cancelPlacement();
@@ -665,29 +701,33 @@ function App() {
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
   }, [modal, selected, selectedSteelFrame, drawingSteelLines, steelLinePhase, undo, redo, remove]);
-  function addArtwork(artworkId) {
+  function addArtwork(artworkId, batch = null) {
+    cancelPartitionPlacement();
     cancelSteelLine();
     const art = project.artworks.find((a) => a.id === artworkId);
     const problem = placementProblem(art) || inventoryProblem(art, layout.placements);
     if (problem) return tell(problem);
     setPlacingArtworkId(artworkId);
+    setPlacingArtworkBatch(batch);
     setPlacementPreview(null);
     setNotice('');
   }
   function commitPlacement(candidate) {
     if (!placingArtworkId) return;
-    const id = uid();
+    const ids = Array.from({ length: placingArtworkBatch?.count || 1 }, () => uid());
     try {
-      const placed = newPlacement(project, placingArtworkId, { ...candidate, id });
+      newArtworkBatch(project, placingArtworkId, candidate, placingArtworkBatch, ids);
       update((d) => {
         const l = d.layouts.find((l) => l.id === d.activeLayoutId);
-        l.placements.push(newPlacement(d, placingArtworkId, placed));
+        l.placements.push(
+          ...newArtworkBatch(d, placingArtworkId, candidate, placingArtworkBatch, ids),
+        );
       });
-      setSelected([id]);
+      setSelected(ids);
       setSelectedSteelFrame(null);
       setSelectedPartition(null);
       cancelPlacement();
-      tell('作品を配置しました');
+      tell(ids.length > 1 ? `作品を${ids.length}点まとめて配置しました` : '作品を配置しました');
     } catch (err) {
       tell(err.message);
     }
@@ -711,28 +751,35 @@ function App() {
       tell(err.message);
     }
   }
-  function addPartition(railId) {
+  function startPartitionPlacement() {
+    cancelSteelLine();
+    cancelPlacement();
+    setSelected([]);
+    setSelectedPartition(null);
+    setSelectedSteelFrame(null);
+    setSelectedSteelLineFace(null);
+    setMode('orbit');
+    setPartitionPreview(null);
+    setPlacingPartition(true);
+    setNotice('');
+  }
+  function commitPartition(candidate) {
+    if (!placingPartition) return;
+    const result = previewPartition(project, candidate, true);
+    if (!result.valid) return tell(result.message);
     const id = uid();
     update((d) => {
-      const l = d.layouts.find((l) => l.id === d.activeLayoutId),
-        r = d.rails.find((r) => r.id === railId);
-      l.partitions.push(
-        fitPartition(
-          {
-            id,
-            name: `可動壁 ${String(l.partitions.length + 1).padStart(2, '0')}`,
-            railId,
-            s: Math.round(railGeometry(r).length / 2),
-            width: 3000,
-            height: 5000,
-            thickness: 200,
-          },
-          d.building,
-          d.rails,
-        ),
-      );
+      const l = d.layouts.find((l) => l.id === d.activeLayoutId);
+      const next = previewPartition(d, candidate, true);
+      if (!next.valid) throw new Error(next.message);
+      l.partitions.push({
+        ...next.partition,
+        id,
+        name: `可動壁 ${String(l.partitions.length + 1).padStart(2, '0')}`,
+      });
     });
     selectPartition(id);
+    tell('可動壁を配置しました');
   }
   const changePartition = useCallback(
     (id, changes) =>
@@ -1046,6 +1093,16 @@ function App() {
                               <Icon name="plus" size={15} />
                             </button>
                           </div>
+                          {quantityLimit(art) - count >= 2 && (
+                            <button
+                              className="batch-add-button"
+                              disabled={!!addProblem}
+                              aria-label={`${art.title}をまとめて配置`}
+                              onClick={() => setModal({ type: 'batch-artwork', id: art.id })}
+                            >
+                              まとめて配置（残り{quantityLimit(art) - count}点）
+                            </button>
+                          )}
                         </div>
                       </article>
                     );
@@ -1110,7 +1167,9 @@ function App() {
               rails={project.rails}
               selected={selectedPartition}
               onSelect={selectPartition}
-              onAdd={addPartition}
+              onAdd={startPartitionPlacement}
+              placing={placingPartition}
+              onCancel={cancelPartitionPlacement}
               onEditRails={() => setModal('rails')}
               showRails={showRails}
               onShowRails={setShowRails}
@@ -1369,14 +1428,20 @@ function App() {
                 onSteelLinePreview={setSteelLinePreview}
                 onSteelLinePoint={commitSteelLinePoint}
                 onSteelWorkplaneMove={moveSteelWorkplane}
-                showRails={showRails}
+                showRails={showRails || placingPartition}
+                placingPartition={placingPartition}
+                partitionPreview={partitionPreview}
+                onPartitionPreview={setPartitionPreview}
+                onPlacePartition={commitPartition}
                 onSelectPartition={selectPartition}
                 onPartitionMove={changePartition}
                 onSelect={select}
+                onObjectContextMenu={openObjectMenu}
                 onMoveGroup={moveGroup}
                 onNotice={tell}
                 onCamera={setCamera}
                 placingArtworkId={placingArtworkId}
+                placingArtworkBatch={placingArtworkBatch}
                 movingPlacementId={movingPlacementId}
                 movingPlacementIds={movingPlacementIds}
                 onMoveStart={startArtworkMove}
@@ -1427,6 +1492,7 @@ function App() {
                     selected={selected}
                     compare={compare}
                     onSelect={select}
+                    onObjectContextMenu={openObjectMenu}
                     camera={camera}
                     mini
                     selectedPartition={selectedPartition}
@@ -1462,17 +1528,23 @@ function App() {
                 selected={selected}
                 compare={compare}
                 onSelect={select}
+                onObjectContextMenu={openObjectMenu}
                 onMoveGroup={moveGroup}
                 camera={mode === 'walk' ? camera : null}
                 showDimensions={dimensions}
                 selectedPartition={selectedPartition}
                 onSelectPartition={selectPartition}
                 onPartitionMove={changePartition}
-                showRails={showRails}
+                showRails={showRails || placingPartition}
+                placingPartition={placingPartition}
+                partitionPreview={partitionPreview}
+                onPartitionPreview={setPartitionPreview}
+                onPlacePartition={commitPartition}
                 selectedSteelFrame={selectedSteelFrame}
                 onSelectSteelFrame={selectSteelFrame}
                 onSteelFrameMove={changeSteelFrame}
                 placingArtworkId={placingArtworkId}
+                placingArtworkBatch={placingArtworkBatch}
                 selectedSteelLineFace={selectedSteelLineFace}
                 onSelectSteelLineFace={selectSteelLineFace}
                 movingPlacementId={movingPlacementId}
@@ -1500,17 +1572,39 @@ function App() {
               </div>
             </section>
           </div>
+          {placingPartition && (
+            <div
+              className={`placement-banner partition-placement-banner ${partitionPreview?.valid === false ? 'invalid' : ''}`}
+              role="status"
+            >
+              <div>
+                <strong>可動壁を追加</strong>
+                <span>
+                  {partitionPreview?.message ||
+                    (partitionPreview?.partition
+                      ? `${project.rails.find((r) => r.id === partitionPreview.partition.railId)?.name} · 中心 ${format(partitionPreview.partition.s)} mm · クリックで確定`
+                      : '3Dまたは平面図の配置ラインを指してください。クリックで確定、Escで中止。')}
+                </span>
+              </div>
+              <Button onClick={cancelPartitionPlacement}>追加を中止</Button>
+            </div>
+          )}
           {placingArt && (
             <div
               className={`placement-banner ${placementPreview?.valid === false ? 'invalid' : ''}`}
               role="status"
             >
               <div>
-                <strong>配置中：{placingArt.title}</strong>
+                <strong>
+                  配置中：{placingArt.title}
+                  {placingArtworkBatch
+                    ? ` · ${placingArtworkBatch.count}点（${placingArtworkBatch.columns}列）`
+                    : ''}
+                </strong>
                 <span>
                   {placementPreview?.message ||
                     (placementPreview?.placement
-                      ? `クリックで配置 · 中心 ${format(placementPreview.placement.s)} mm / 下端 ${format(placementPreview.placement.bottom)} mm`
+                      ? `クリックで${placingArtworkBatch ? `${placingArtworkBatch.count}点まとめて` : ''}配置 · 中心 ${format(placementPreview.placement.s)} mm / 下端 ${format(placementPreview.placement.bottom)} mm`
                       : '3Dまたは平面図で壁を指してください。クリックで確定、Escで中止。')}
                 </span>
               </div>
@@ -1870,6 +1964,79 @@ function App() {
           </button>
         </div>
       )}
+      {contextTarget &&
+        (() => {
+          const placement = layout.placements.find((p) => p.id === contextTarget.id);
+          const art =
+            contextTarget.type === 'artwork' &&
+            project.artworks.find((a) => a.id === placement?.artworkId);
+          const partition =
+            contextTarget.type === 'partition' && parts.find((p) => p.id === contextTarget.id);
+          if (!art && !partition) return null;
+          return (
+            <ObjectContextMenu
+              key={`${contextTarget.type}:${contextTarget.id}`}
+              target={contextTarget}
+              art={art}
+              partition={partition}
+              onClose={closeContextMenu}
+              onInfo={() => {
+                closeContextMenu();
+                setModal({ type: 'artwork-info', id: art.id });
+              }}
+              onDelete={() => {
+                closeContextMenu();
+                if (partition) setModal({ type: 'delete-partition', id: partition.id });
+                else {
+                  update((d) => {
+                    const l = d.layouts.find((l) => l.id === d.activeLayoutId);
+                    l.placements = l.placements.filter((p) => p.id !== contextTarget.id);
+                  });
+                  setSelected([]);
+                  tell('作品の配置を削除しました');
+                }
+              }}
+            />
+          );
+        })()}
+      {modal?.type === 'artwork-info' &&
+        (() => {
+          const art = project.artworks.find((a) => a.id === modal.id);
+          return (
+            art && (
+              <ArtworkDetails
+                art={art}
+                count={layout.placements.filter((p) => p.artworkId === art.id).length}
+                Modal={Modal}
+                Button={Button}
+                onClose={() => setModal(null)}
+                onEdit={() => setModal({ type: 'edit-artwork', id: art.id })}
+              />
+            )
+          );
+        })()}
+      {modal?.type === 'batch-artwork' &&
+        (() => {
+          const art = project.artworks.find((a) => a.id === modal.id);
+          return (
+            art && (
+              <ArtworkBatchDialog
+                art={art}
+                remaining={
+                  quantityLimit(art) -
+                  layout.placements.filter((p) => p.artworkId === art.id).length
+                }
+                Modal={Modal}
+                Button={Button}
+                onClose={() => setModal(null)}
+                onStart={(options) => {
+                  setModal(null);
+                  addArtwork(art.id, options);
+                }}
+              />
+            )
+          );
+        })()}
       {modal === 'artwork-labels' && (
         <ArtworkLabelOptions
           settings={labelSettings}

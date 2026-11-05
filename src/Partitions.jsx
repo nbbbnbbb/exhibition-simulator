@@ -38,35 +38,26 @@ export function PartitionLibrary({
   selected,
   onSelect,
   onAdd,
+  placing,
+  onCancel,
   onEditRails,
   showRails,
   onShowRails,
 }) {
-  const [rail, setRail] = useState('rail-cross-3');
-  const railId = rails.some((r) => r.id === rail) ? rail : rails[0]?.id;
   return (
     <div className="partitions-library">
       <p className="muted">
-        点線に沿って可動壁を配置。
+        追加モードで3D・平面図の点線を指すとプレビュー表示。クリックで配置します。
         <br />
         初期寸法 3,000 × 5,000 × 200 mm
       </p>
-      <label className="select-label">
-        配置ライン
-        <select
-          aria-label="追加先の配置ライン"
-          value={railId || ''}
-          onChange={(e) => setRail(e.target.value)}
-        >
-          {rails.map((r) => (
-            <option key={r.id} value={r.id}>
-              {r.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <button className="button primary full" disabled={!railId} onClick={() => onAdd(railId)}>
-        ＋ 可動壁を追加
+      <button
+        className="button primary full"
+        disabled={!rails.length}
+        aria-pressed={placing}
+        onClick={placing ? onCancel : onAdd}
+      >
+        {placing ? '追加を中止（Esc）' : '＋ 可動壁を追加'}
       </button>
       <label className="check-label">
         <input

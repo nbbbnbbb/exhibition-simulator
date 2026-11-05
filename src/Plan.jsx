@@ -1,14 +1,21 @@
 import { useRef, useEffect } from 'react';
 import { walls, polygon, format, fitPartition, partitionGeometry } from './domain.js';
-import { previewPlacement, previewMove, pickPlanWall } from './artworkPlacement.js';
+import {
+  previewArtworkAddition,
+  artworkBatchDimensions,
+  previewMove,
+  pickPlanWall,
+} from './artworkPlacement.js';
 import { artworkLabelRows } from './artworkLabels.js';
 import { frameGeometry, validateFrame } from './steelFrames.js';
 import { detectSteelLineFaces } from './steelLineFaces.js';
+import { pickPartitionRail, previewPartition } from './partitionPlacement.js';
 export default function Plan({
   project,
   selected,
   compare,
   onSelect,
+  onObjectContextMenu,
   onMoveGroup,
   camera,
   showDimensions = true,
@@ -22,7 +29,12 @@ export default function Plan({
   selectedSteelLineFace,
   onSelectSteelLineFace,
   showRails = false,
+  placingPartition = false,
+  partitionPreview,
+  onPartitionPreview,
+  onPlacePartition,
   placingArtworkId,
+  placingArtworkBatch,
   movingPlacementId,
   movingPlacementIds = [],
   onMoveStart,
@@ -112,12 +124,20 @@ export default function Plan({
               },
               d.ids,
             )
-          : previewPlacement(project, art.id, {
-              id: 'preview',
-              wallId: nearest.wall.id,
-              s: Math.round(nearest.s),
-              bottom: Math.max(0, Math.round(1500 - art.height / 2)),
-            })
+          : previewArtworkAddition(
+              project,
+              art.id,
+              {
+                id: 'preview',
+                wallId: nearest.wall.id,
+                s: Math.round(nearest.s),
+                bottom: Math.max(
+                  0,
+                  Math.round(1500 - artworkBatchDimensions(art, placingArtworkBatch).height / 2),
+                ),
+              },
+              placingArtworkBatch,
+            )
         : {
             placement: null,
             valid: false,
@@ -126,6 +146,18 @@ export default function Plan({
     result.source = 'plan';
     if (moving) d.preview = result;
     onPreview?.(result);
+    return result;
+  };
+  const pointerPartitionPreview = (e) => {
+    const pos = point(e),
+      scale = svg.current.getScreenCTM();
+    const candidate = pickPartitionRail(
+      project.rails,
+      { x: pos.x, z: pos.y },
+      16 / Math.hypot(scale.a, scale.b),
+    );
+    const result = { ...previewPartition(project, candidate, e.altKey), source: 'plan' };
+    onPartitionPreview?.(result);
     return result;
   };
   const down = (e, p) => {
@@ -154,6 +186,7 @@ export default function Plan({
     e.currentTarget.setPointerCapture(e.pointerId);
   };
   const downPart = (e, p) => {
+    if (e.button !== 0) return;
     e.stopPropagation();
     onSelectPartition(p.id);
     if (mini) return;
@@ -276,6 +309,15 @@ export default function Plan({
         className={ghost ? 'ghost-art' : 'plan-art'}
         opacity={!ghost && movingPlacementIds.includes(p.id) ? 0.15 : undefined}
         onPointerDown={ghost ? undefined : (e) => down(e, p)}
+        onContextMenu={
+          ghost
+            ? undefined
+            : (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onObjectContextMenu?.({ type: 'artwork', id: p.id, x: e.clientX, y: e.clientY });
+              }
+        }
         onPointerMove={move}
         onPointerUp={up}
         onPointerCancel={up}
@@ -328,8 +370,17 @@ export default function Plan({
       </g>
     );
   };
-  const part = (p, ghost = false) => {
+  const part = (p, ghost = false, preview = false) => {
     const g = partitionGeometry(p, project.rails);
+    const color = preview
+      ? partitionPreview.valid
+        ? '#468950'
+        : '#d14935'
+      : ghost
+        ? '#ab7cba'
+        : selectedPartition === p.id
+          ? '#b68246'
+          : '#697f5b';
     const coords = [
       [-1, -1],
       [1, -1],
@@ -344,21 +395,34 @@ export default function Plan({
     return (
       <g
         key={(ghost ? 'g' : '') + p.id}
-        className={ghost ? 'ghost-part' : 'plan-partition'}
-        data-partition-id={p.id}
-        onPointerDown={ghost ? undefined : (e) => downPart(e, p)}
+        className={preview ? 'plan-partition-preview' : ghost ? 'ghost-part' : 'plan-partition'}
+        data-partition-id={ghost || preview ? undefined : p.id}
+        pointerEvents={preview ? 'none' : undefined}
+        onPointerDown={ghost || preview ? undefined : (e) => downPart(e, p)}
+        onContextMenu={
+          ghost || preview
+            ? undefined
+            : (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onObjectContextMenu?.({ type: 'partition', id: p.id, x: e.clientX, y: e.clientY });
+              }
+        }
         onPointerMove={move}
         onPointerUp={up}
         onPointerCancel={up}
       >
         <polygon
           points={coords}
-          fill={ghost ? 'none' : selectedPartition === p.id ? '#cfa772' : '#e6e7db'}
-          stroke={ghost ? '#ab7cba' : selectedPartition === p.id ? '#b68246' : '#697f5b'}
+          fill={
+            preview ? color : ghost ? 'none' : selectedPartition === p.id ? '#cfa772' : '#e6e7db'
+          }
+          fillOpacity={preview ? 0.35 : undefined}
+          stroke={color}
           strokeWidth={mini ? 100 : 65}
-          strokeDasharray={ghost ? '180 100' : undefined}
+          strokeDasharray={ghost || preview ? '180 100' : undefined}
         />
-        {!ghost && (
+        {!ghost && !preview && (
           <line
             x1={g.x - (g.tangent.x * p.width) / 2}
             y1={g.z - (g.tangent.z * p.width) / 2}
@@ -466,7 +530,11 @@ export default function Plan({
   };
   return (
     <svg
-      data-placing={String(!!(placingArtworkId || movingPlacementId) && !mini)}
+      data-placing={String(!!(placingArtworkId || movingPlacementId || placingPartition) && !mini)}
+      data-placing-partition={String(placingPartition && !mini)}
+      data-partition-preview-rail={partitionPreview?.partition?.railId || ''}
+      data-partition-preview-s={partitionPreview?.partition?.s ?? ''}
+      data-partition-preview-valid={String(partitionPreview?.valid === true)}
       data-camera-x={camera?.x}
       data-camera-z={camera?.z}
       ref={svg}
@@ -475,22 +543,40 @@ export default function Plan({
       role="img"
       aria-label={mini ? '現在地ミニマップ' : '寸法付き展示平面図'}
       onPointerMoveCapture={(e) => {
+        if (placingPartition && !mini) {
+          e.stopPropagation();
+          pointerPartitionPreview(e);
+          return;
+        }
         if (!placingArtworkId || mini) return;
         e.stopPropagation();
         pointerPreview(e);
       }}
       onPointerDownCapture={(e) => {
+        if (placingPartition && !mini && e.button === 0) {
+          e.stopPropagation();
+          e.preventDefault();
+          const result = pointerPartitionPreview(e);
+          if (result.valid) onPlacePartition?.(result.partition);
+          else onNotice?.(result.message);
+          return;
+        }
         if (!placingArtworkId || mini || e.button !== 0) return;
         e.stopPropagation();
         e.preventDefault();
         const result = pointerPreview(e);
-        if (result?.valid) onPlace?.(result.placement);
+        if (result?.valid) onPlace?.(result.anchor || result.placement);
       }}
       onPointerLeave={() => {
+        if (placingPartition && !mini) onPartitionPreview?.(null);
         if (placingArtworkId && !mini) onPreview?.(null);
       }}
       onPointerDown={(e) => {
         if (e.target === svg.current) onSelect(null);
+      }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onObjectContextMenu?.(null);
       }}
     >
       <defs>
@@ -524,13 +610,18 @@ export default function Plan({
         project.rails.map((r) => (
           <line
             className="partition-floor-line"
+            data-rail-id={r.id}
             key={r.id}
             x1={r.x1}
             y1={r.z1}
             x2={r.x2}
             y2={r.z2}
-            stroke="#8ba879"
-            strokeWidth="40"
+            stroke={
+              placingPartition && partitionPreview?.partition?.railId === r.id
+                ? '#468950'
+                : '#8ba879'
+            }
+            strokeWidth={placingPartition ? '75' : '40'}
             strokeDasharray="180 130"
             opacity=".65"
           >
@@ -586,6 +677,10 @@ export default function Plan({
       {layout.steelFrames?.map((f) => steel(f))}
       {compare?.placements.map((p) => art(p, true))}
       {layout.placements.map((p) => art(p))}
+      {!mini &&
+        placingPartition &&
+        partitionPreview?.partition &&
+        part(partitionPreview.partition, false, true)}
       {!mini &&
         (
           placementPreview?.placements ||

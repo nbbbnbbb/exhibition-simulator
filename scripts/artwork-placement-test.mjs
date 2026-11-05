@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import { chromium } from 'playwright';
-import { pointOnPlan, placeOnPlan, storedProject, waitProject } from './placement-test-helpers.mjs';
+import {
+  addPartitionOnPlan,
+  pointOnPlan,
+  placeOnPlan,
+  storedProject,
+  waitProject,
+} from './placement-test-helpers.mjs';
 const browser = await chromium.launch({
   channel: process.env.PLAYWRIGHT_CHANNEL || 'chrome',
   headless: true,
@@ -174,7 +180,7 @@ try {
   checks.push('informational labels excluded from GLB');
   await page.getByRole('button', { name: '平面', exact: true }).click();
   await page.getByRole('button', { name: /^可動壁 \d/ }).click();
-  await page.getByRole('button', { name: '＋ 可動壁を追加', exact: true }).click();
+  await addPartitionOnPlan(page);
   let saved = await waitProject(page, (p) => p.layouts[0].partitions.length === 1);
   const rail = saved.rails.find((r) => r.id === 'rail-cross-3');
   const work = saved.artworks.find((a) => a.id.endsWith('-goda-gibbon'));
