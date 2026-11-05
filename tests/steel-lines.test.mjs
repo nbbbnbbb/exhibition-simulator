@@ -5,6 +5,12 @@ import { createProject, validateProject } from '../src/domain.js';
 import { frameGeometry, newSteelFrame, validateFrame } from '../src/steelFrames.js';
 import { makeSteelFrame } from '../src/SteelFrames3D.js';
 import {
+  steelSnapGeometry,
+  snapSteelPoint,
+  steelOrthogonalConstraint,
+  constrainSteelPoint,
+} from '../src/steelSnapping.js';
+import {
   newSteelLine,
   pointOnSteelPlane,
   previewSteelLine,
@@ -15,6 +21,134 @@ import {
   moveSteelPlane,
   DEFAULT_STEEL_LINE_SETTINGS,
 } from '../src/steelLinePlacement.js';
+
+const xyProject = (p) => ({ x: p[0] / 10, y: p[1] / 10, depth: 0, w: 1 });
+
+test('スナップ候補はアクティブプランの鉄骨と建物の角・辺を実寸で取得する', () => {
+  const p = createProject();
+  const line = newSteelLine(p, [-2000, -500, 14000], [3000, 2500, 15000], 'c65');
+  const rectangle = { ...newSteelFrame(p, 'rectangle'), rotation: 37 };
+  p.layouts[0].steelFrames.push(line, rectangle);
+  const other = structuredClone(p.layouts[0]);
+  other.id = 'inactive';
+  other.steelFrames[0].x = 50000;
+  p.layouts.push(other);
+  const before = structuredClone(p),
+    targets = steelSnapGeometry(p);
+  assert.equal(targets.steel.points.length, 6);
+  assert.equal(targets.steel.edges.length, 5);
+  assert.deepEqual(targets.steel.points[0].point, [-2000, -500, 14000]);
+  assert.deepEqual(targets.steel.points[2].point, frameGeometry(rectangle, p).nodes[0]);
+  assert.ok(!targets.steel.points.some((t) => t.point[0] >= 50000));
+  assert.ok(
+    targets.all.points.some((t) => t.label === '天井の角' && t.point[1] === p.building.height),
+  );
+  assert.ok(
+    targets.all.edges.some(
+      (t) =>
+        t.label === '建物の壁の辺' &&
+        t.a[0] === 0 &&
+        t.b[0] === 0 &&
+        t.a[1] === 0 &&
+        t.b[1] === p.building.height,
+    ),
+  );
+  assert.ok(targets.all.points.some((t) => t.label === '梁の角'));
+  assert.deepEqual(p, before);
+});
+
+test('端点を優先して吸着し、範囲外・OFF・背面の候補を吸着しない', () => {
+  const targets = {
+    points: [{ point: [2000, 1000, 0], label: '端点' }],
+    edges: [{ a: [0, 1000, 0], b: [4000, 1000, 0], label: '辺' }],
+  };
+  assert.deepEqual(snapSteelPoint([1990, 1010, 0], targets, xyProject), {
+    point: [2000, 1000, 0],
+    label: '端点',
+  });
+  assert.equal(snapSteelPoint([2000, 1000, 0], targets, xyProject, { enabled: false }), null);
+  assert.equal(snapSteelPoint([2000, 1300, 0], targets, xyProject), null);
+  assert.equal(
+    snapSteelPoint([2000, 1000, 0], targets, (p) => ({ ...xyProject(p), depth: 2 })),
+    null,
+  );
+  assert.deepEqual(snapSteelPoint([1000, 1040, 0], targets, xyProject), {
+    point: [1000, 1000, 0],
+    label: '辺',
+  });
+});
+
+test('遠近の異なる部材の途中にもスクリーン座標から正しく吸着する', () => {
+  const targets = {
+    points: [],
+    edges: [{ a: [0, 0, 1000], b: [1000, 0, 2000], label: '鉄骨の部材' }],
+  };
+  const project = (p) => ({ x: (p[0] / p[2]) * 100, y: (p[1] / p[2]) * 100, w: p[2], depth: 0 });
+  const result = snapSteelPoint([0, 0, 1000], targets, project, { cursor: { x: 25, y: 2 } });
+  assert.deepEqual(result.point, [333, 0, 1333]);
+  assert.equal(result.label, '鉄骨の部材');
+});
+
+test('直交モードは各作業平面の軸を守り、OFFや始点指定前は拘束しない', () => {
+  const start = [1000, 1500, 14000];
+  for (const [plane, point, axis] of [
+    ['xz', [4000, 1500, 14500], 0],
+    ['xz', [1200, 1500, 17000], 2],
+    ['xy', [1300, 4500, 14000], 1],
+    ['yz', [1000, 4500, 14500], 1],
+    ['yz', [1000, 1700, 18000], 2],
+  ]) {
+    const tool = { plane, start, orthogonal: true };
+    const constraint = steelOrthogonalConstraint(tool, point);
+    assert.deepEqual(constraint.axes, [axis]);
+    const end = constrainSteelPoint(point, constraint);
+    assert.equal(end[axis], point[axis]);
+    end.forEach((v, i) => {
+      if (i !== axis) assert.equal(v, start[i]);
+    });
+    assert.equal(steelOrthogonalConstraint({ ...tool, orthogonal: false }, point), null);
+    assert.equal(steelOrthogonalConstraint({ ...tool, start: null }, point), null);
+  }
+});
+
+test('直交とスナップを併用すると、軸外の端点を避けて辺との交点に吸着する', () => {
+  const constraint = { origin: [1000, 1500, 0], axes: [0] };
+  const targets = {
+    points: [{ point: [5000, 1600, 0], label: '軸外端点' }],
+    edges: [{ a: [5000, 0, 0], b: [5000, 5500, 0], label: '建物の壁の辺' }],
+  };
+  assert.deepEqual(snapSteelPoint([5010, 1550, 0], targets, xyProject, { constraint }), {
+    point: [5000, 1500, 0],
+    label: '建物の壁の辺',
+  });
+  targets.edges = [{ a: [2000, 0, 0], b: [6000, 4000, 0], label: '斜めの鉄骨' }];
+  assert.deepEqual(snapSteelPoint([3510, 1510, 0], targets, xyProject, { constraint }), {
+    point: [3500, 1500, 0],
+    label: '斜めの鉄骨',
+  });
+  targets.edges[0].b[2] = 500;
+  assert.equal(snapSteelPoint([3510, 1510, 0], targets, xyProject, { constraint }), null);
+});
+
+test('作業平面の中心は鉄骨へ吸着し、XYZハンドルの移動軸も保持する', () => {
+  const targets = { points: [{ point: [5000, 1500, 14000], label: '鉄骨の端点' }], edges: [] };
+  assert.deepEqual(
+    snapSteelPoint([4980, 1530, 14000], targets, xyProject).point,
+    [5000, 1500, 14000],
+  );
+  assert.equal(
+    snapSteelPoint([4980, 1530, 14000], targets, xyProject, {
+      constraint: { origin: [4000, 1530, 14000], axes: [0] },
+    }),
+    null,
+  );
+  assert.deepEqual(
+    snapSteelPoint([4980, 1500, 14000], targets, xyProject, {
+      constraint: { origin: [4000, 1500, 14000], axes: [0] },
+    }).point,
+    [5000, 1500, 14000],
+  );
+});
 
 test('水平・垂直・斜めのラインはクリックした端点を保って実寸の部材になる', () => {
   const p = createProject(),

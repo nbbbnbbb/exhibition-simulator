@@ -6,6 +6,8 @@ export const DEFAULT_STEEL_LINE_SETTINGS = {
   center: [4500, 1500, 15000],
   sectionId: 'c65',
   continuous: true,
+  snap: true,
+  orthogonal: false,
 };
 export const STEEL_LINE_PLANES = [
   { id: 'xz', name: '水平面 XZ', axis: 1, label: '作業面の高さ Y', defaultOffset: 1500 },
