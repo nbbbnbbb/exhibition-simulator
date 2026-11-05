@@ -89,6 +89,29 @@ test('遠近の異なる部材の途中にもスクリーン座標から正し�
   assert.equal(result.label, '鉄骨の部材');
 });
 
+test('カメラの背後や視点上に端点がある長い辺も、見える部分へ吸着できる', () => {
+  const project = (p) => ({ x: (p[0] / p[2]) * 100, y: (p[1] / p[2]) * 100, w: p[2], depth: 0 });
+  project.near = 100;
+  for (const z of [-1000, 0]) {
+    const targets = {
+      points: [],
+      edges: [{ a: [1000, 0, z], b: [1000, 0, 3000], label: '長い辺' }],
+    };
+    assert.deepEqual(
+      snapSteelPoint([1000, 0, 2000], targets, project, { cursor: { x: 50, y: 2 } }),
+      { point: [1000, 0, 2000], label: '長い辺' },
+    );
+  }
+  assert.equal(
+    snapSteelPoint(
+      [1000, 0, 2000],
+      { points: [], edges: [{ a: [1000, 0, -2000], b: [1000, 0, -1000], label: '背後' }] },
+      project,
+    ),
+    null,
+  );
+});
+
 test('直交モードは各作業平面の軸を守り、OFFや始点指定前は拘束しない', () => {
   const start = [1000, 1500, 14000];
   for (const [plane, point, axis] of [

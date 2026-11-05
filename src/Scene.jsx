@@ -568,10 +568,9 @@ export const Scene = forwardRef(function Scene(
     };
     function snappingProjection() {
       const rect = renderer.domElement.getBoundingClientRect();
-      return (point) => {
+      const project = (point) => {
         const v = new THREE.Vector3(...point.map(m));
         const w = -v.clone().applyMatrix4(camera.matrixWorldInverse).z;
-        if (w <= 0) return null;
         v.project(camera);
         return {
           x: rect.left + ((v.x + 1) * rect.width) / 2,
@@ -580,6 +579,8 @@ export const Scene = forwardRef(function Scene(
           w,
         };
       };
+      project.near = camera.near;
+      return project;
     }
     let planeHandleOrigin = null;
     function positionWorkplane(position, constraint = null) {
