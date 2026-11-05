@@ -155,7 +155,8 @@ function constrainedEdge(a, b, constraint) {
   return [p, p];
 }
 
-// project() returns CSS-pixel x/y, clip depth, and positive camera depth w.
+// project() returns CSS-pixel x/y, clip depth, and signed camera depth w.
+// project.near is the camera's near plane in the same units as w.
 // Point targets take precedence over edges inside the same 12px acquisition radius.
 export function snapSteelPoint(
   point,
@@ -165,10 +166,12 @@ export function snapSteelPoint(
 ) {
   if (!point || !enabled) return null;
   const pointer = cursor || project(point);
-  if (!pointer) return null;
+  if (!pointer || (!cursor && pointer.w !== undefined && pointer.w <= 0)) return null;
   const distance = (p) => {
     const q = project(p);
-    return !q || (q.depth !== undefined && (q.depth < -1 || q.depth > 1))
+    return !q ||
+      (q.w !== undefined && q.w <= 0) ||
+      (q.depth !== undefined && (q.depth < -1 || q.depth > 1))
       ? Infinity
       : Math.hypot(q.x - pointer.x, q.y - pointer.y);
   };
@@ -191,10 +194,23 @@ export function snapSteelPoint(
   for (const target of targets.edges) {
     const segment = constrainedEdge(target.a, target.b, constraint);
     if (!segment) continue;
-    const [a, b] = segment,
+    let [a, b] = segment,
       pa = project(a),
       pb = project(b);
     if (!pa || !pb) continue;
+    if (pa.w !== undefined && pb.w !== undefined) {
+      const near = project.near || 1e-6;
+      if (pa.w < near && pb.w < near) continue;
+      // Clip in world space before projecting an edge that crosses the camera plane.
+      if (pa.w < near) {
+        a = lerp(a, b, (near - pa.w) / (pb.w - pa.w));
+        pa = project(a);
+      } else if (pb.w < near) {
+        b = lerp(a, b, (near - pa.w) / (pb.w - pa.w));
+        pb = project(b);
+      }
+    }
+    if (!pa || !pb || ![pa.x, pa.y, pb.x, pb.y].every(Number.isFinite)) continue;
     const dx = pb.x - pa.x,
       dy = pb.y - pa.y,
       length = dx * dx + dy * dy;
