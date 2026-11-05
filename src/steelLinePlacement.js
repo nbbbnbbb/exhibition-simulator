@@ -1,13 +1,9 @@
-import {
-  assertSteelSegmentInside,
-  sectionRadius,
-  steelSections,
-  validateFrame,
-} from './steelFrames.js';
+import { steelSections, validateFrame } from './steelFrames.js';
 
 export const DEFAULT_STEEL_LINE_SETTINGS = {
   plane: 'xz',
   offset: 1500,
+  center: [4500, 1500, 15000],
   sectionId: 'c65',
   continuous: true,
 };
@@ -16,6 +12,17 @@ export const STEEL_LINE_PLANES = [
   { id: 'xy', name: '垂直面 XY', axis: 2, label: '作業面の位置 Z', defaultOffset: 15000 },
   { id: 'yz', name: '垂直面 YZ', axis: 0, label: '作業面の位置 X', defaultOffset: 4500 },
 ];
+export function steelPlaneCenter(settings) {
+  const axis = STEEL_LINE_PLANES.find((p) => p.id === settings.plane)?.axis;
+  const center = [...(settings.center || DEFAULT_STEEL_LINE_SETTINGS.center)];
+  if (axis !== undefined) center[axis] = settings.offset;
+  return center;
+}
+export function moveSteelPlane(settings, position) {
+  const center = position.map((v) => Math.round(v));
+  const axis = STEEL_LINE_PLANES.find((p) => p.id === settings.plane).axis;
+  return { ...settings, center, offset: center[axis] };
+}
 export const steelLineLength = (f) => Math.hypot(...f.lineEnd);
 export function steelLineEndpoints(f) {
   return [[f.x, f.y, f.z], f.lineEnd.map((v, i) => v + [f.x, f.y, f.z][i])];
@@ -58,11 +65,10 @@ export function previewSteelLine(project, tool, point, snapped = false) {
   let frame;
   const length = tool.start ? Math.hypot(...point.map((v, i) => v - tool.start[i])) : 0;
   try {
-    if (!section || point.length !== 3 || !point.every(Number.isInteger))
+    if (!section || point.length !== 3 || !point.every(Number.isSafeInteger))
       throw new Error('部材断面と座標を確認してください');
     if (tool.start)
       frame = newSteelLine(project, tool.start, point, tool.sectionId, 'steel-line-preview');
-    else assertSteelSegmentInside(point, point, project.building, sectionRadius(section));
     return {
       valid: true,
       point,

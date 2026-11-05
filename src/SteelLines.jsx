@@ -5,6 +5,8 @@ import {
   steelLineLength,
   steelLineEndpoints,
   withSteelLineEndpoints,
+  steelPlaneCenter,
+  moveSteelPlane,
 } from './steelLinePlacement.js';
 
 export function SteelLineControls({
@@ -15,11 +17,45 @@ export function SteelLineControls({
   start,
   onStart,
   onStop,
+  phase,
+  onConfirm,
+  onMovePlane,
+  onFocusPlane,
 }) {
-  const plane = STEEL_LINE_PLANES.find((p) => p.id === settings.plane);
+  const center = steelPlaneCenter(settings);
   return (
     <section className="steel-line-controls" aria-label="鉄骨ラインの配置">
       <div className="section-label">3Dでラインを描く</div>
+      <p className="workplane-step">
+        {!active
+          ? '作業平面を置いてから始めます'
+          : phase === 'plane'
+            ? '1 / 作業平面をドラッグして配置'
+            : '2 / 作業平面でラインを描く'}
+      </p>
+      {!active ? (
+        <button className="button primary full" onClick={onStart}>
+          作業平面を配置
+        </button>
+      ) : phase === 'plane' ? (
+        <>
+          <p className="field-note">
+            半透明の平面をドラッグ。X・Y・Zの矢印でも位置を調整できます。
+          </p>
+          <button className="button primary full" onClick={onConfirm}>
+            この平面でラインを描く
+          </button>
+        </>
+      ) : (
+        <button className="button full" onClick={onMovePlane}>
+          作業平面を動かす
+        </button>
+      )}
+      {active && (
+        <button className="button full" onClick={onFocusPlane}>
+          作業平面を拡大
+        </button>
+      )}
       <label className="select-label">
         作業面
         <select
@@ -30,7 +66,8 @@ export function SteelLineControls({
             onSettings({
               ...settings,
               plane: next.id,
-              offset: start?.[next.axis] ?? next.defaultOffset,
+              center: start ? [...start] : center,
+              offset: (start || center)[next.axis],
             });
           }}
         >
@@ -41,13 +78,23 @@ export function SteelLineControls({
           ))}
         </select>
       </label>
-      <Field
-        label={plane.label}
-        value={settings.offset}
-        min={plane.axis === 0 ? -100000 : 0}
-        max={150000}
-        onChange={(offset) => onSettings({ ...settings, offset })}
-      />
+      <details className="workplane-coordinates">
+        <summary>作業平面の座標</summary>
+        {['X', 'Y', 'Z'].map((axis, i) => (
+          <Field
+            key={axis}
+            label={`作業平面の中心 ${axis}`}
+            value={center[i]}
+            min={Number.MIN_SAFE_INTEGER}
+            max={Number.MAX_SAFE_INTEGER}
+            onChange={(v) => {
+              const next = [...center];
+              next[i] = v;
+              onSettings(moveSteelPlane(settings, next));
+            }}
+          />
+        ))}
+      </details>
       <label className="select-label">
         ラインの部材断面
         <select
@@ -71,15 +118,14 @@ export function SteelLineControls({
         />
         終点から続けて描く
       </label>
-      <button
-        className={`button full ${active ? '' : 'primary'}`}
-        onClick={active ? onStop : onStart}
-      >
-        {active ? 'ライン配置を終了' : '3Dでライン配置を開始'}
-      </button>
+      {active && (
+        <button className="button full" onClick={onStop}>
+          ライン配置を終了
+        </button>
+      )}
       <p className="field-note">
-        始点・終点をクリック。作業面を変えて立体的につなげます。端点に吸着、Altで1
-        mm刻み。右ドラッグで視点回転、Enter／Escで終了。
+        平面の位置を決めたら始点・終点をクリック。建物の外や床下・天井より上にも配置できます。端点に吸着、Altで1
+        mm刻み。右ドラッグで視点回転。Enterで確定／終了、Escで中止。
       </p>
       {active && start && (
         <p className="steel-line-start">
@@ -147,8 +193,8 @@ export function SteelLineInspector({
               key={axis}
               label={`ライン${which ? '終点' : '始点'} ${axis}`}
               value={point[i]}
-              min={i === 0 ? -100000 : 0}
-              max={150000}
+              min={Number.MIN_SAFE_INTEGER}
+              max={Number.MAX_SAFE_INTEGER}
               onChange={(v) => changeEnd(which, i, v)}
             />
           ))}

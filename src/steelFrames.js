@@ -248,12 +248,6 @@ export function frameGeometry(f, p) {
   const nodes = local.map(([x, y, z]) => [f.x + x * c + z * s, f.y + y, f.z - x * s + z * c]);
   return { shape, section, local, nodes };
 }
-const inside = (x, z, b) =>
-  x >= b.mainWidth - b.overallWidth &&
-  x <= b.mainWidth &&
-  z >= 0 &&
-  z <= b.length &&
-  (x >= 0 || z >= b.length - b.wingDepth);
 export function validateFrame(f, p) {
   if (f?.kind === 'line') return validateSteelLine(f, p);
   if (
@@ -265,14 +259,13 @@ export function validateFrame(f, p) {
     f.name.length > 200 ||
     !frameShapes(p).some((s) => s.id === f.shapeId) ||
     !steelSections(p).some((s) => s.id === f.sectionId) ||
-    ![f.width, f.height, f.depth, f.x, f.y, f.z, f.rotation].every(Number.isInteger) ||
+    ![f.width, f.height, f.depth, f.x, f.y, f.z, f.rotation].every(Number.isSafeInteger) ||
     f.width < 100 ||
     f.width > 30000 ||
     f.height < 100 ||
     f.height > 20000 ||
     f.depth < 0 ||
     f.depth > 30000 ||
-    f.y < 0 ||
     f.rotation < -360 ||
     f.rotation > 360
   )
@@ -282,38 +275,6 @@ export function validateFrame(f, p) {
   if (f.width <= 2 * r || f.height <= 2 * r || (shapeBounds(g.shape).size[2] && f.depth <= 2 * r))
     throw new Error('フレームの外寸を部材断面より大きくしてください');
   if (!shapeBounds(g.shape).size[2] && f.depth !== 0) throw new Error('平面形状の奥行は0 mmです');
-  if (f.y + f.height > p.building.height) throw new Error('鉄骨フレームが天井高を超えます');
-  // Check each member and each convex face diagonal across the L-shaped floor's re-entrant corner.
-  const lines = [...g.shape.members];
-  for (const face of g.shape.faces)
-    for (const a of face.nodes) for (const b of face.nodes) lines.push([a, b]);
-  for (const [a, b] of lines) {
-    const start = g.nodes[a],
-      end = g.nodes[b],
-      ts = [0, 1];
-    for (const [axis, boundary] of [
-      [0, 0],
-      [2, p.building.length - p.building.wingDepth],
-    ]) {
-      if (end[axis] !== start[axis]) {
-        const t = (boundary - start[axis]) / (end[axis] - start[axis]);
-        if (t > 0 && t < 1) ts.push(t);
-      }
-    }
-    ts.sort((a, b) => a - b);
-    const samples = [...ts, ...ts.slice(1).map((t, i) => (t + ts[i]) / 2)];
-    for (const t of samples)
-      for (const dx of [-r, r])
-        for (const dz of [-r, r])
-          if (
-            !inside(
-              start[0] + (end[0] - start[0]) * t + dx,
-              start[2] + (end[2] - start[2]) * t + dz,
-              p.building,
-            )
-          )
-            throw new Error('鉄骨フレームが建物の範囲外になります');
-  }
   if (
     !f.membrane ||
     !/^#[0-9a-f]{6}$/i.test(f.membrane.color) ||
@@ -327,32 +288,6 @@ export function validateFrame(f, p) {
     throw new Error('ビニール膜の設定が不正です');
   return f;
 }
-export function assertSteelSegmentInside(start, end, building, radius) {
-  if (Math.min(start[1], end[1]) < radius || Math.max(start[1], end[1]) + radius > building.height)
-    throw new Error('部材断面を含めて床と天井の間に収めてください');
-  const ts = [0, 1];
-  for (const [axis, boundary] of [
-    [0, 0],
-    [2, building.length - building.wingDepth],
-  ]) {
-    if (end[axis] !== start[axis]) {
-      const t = (boundary - start[axis]) / (end[axis] - start[axis]);
-      if (t > 0 && t < 1) ts.push(t);
-    }
-  }
-  ts.sort((a, b) => a - b);
-  for (const t of [...ts, ...ts.slice(1).map((v, i) => (v + ts[i]) / 2)])
-    for (const dx of [-radius, radius])
-      for (const dz of [-radius, radius])
-        if (
-          !inside(
-            start[0] + (end[0] - start[0]) * t + dx,
-            start[2] + (end[2] - start[2]) * t + dz,
-            building,
-          )
-        )
-          throw new Error('鉄骨ラインが建物の範囲外になります');
-}
 export function validateSteelLine(f, p) {
   const section = steelSections(p).find((s) => s.id === f.sectionId);
   if (
@@ -361,10 +296,10 @@ export function validateSteelLine(f, p) {
     typeof f.name !== 'string' ||
     f.name.length > 200 ||
     !section ||
-    ![f.x, f.y, f.z].every(Number.isInteger) ||
+    ![f.x, f.y, f.z].every(Number.isSafeInteger) ||
     !Array.isArray(f.lineEnd) ||
     f.lineEnd.length !== 3 ||
-    !f.lineEnd.every(Number.isInteger) ||
+    !f.lineEnd.every(Number.isSafeInteger) ||
     f.rotation !== 0 ||
     !f.membrane ||
     !Array.isArray(f.membrane.faces) ||
@@ -378,12 +313,8 @@ export function validateSteelLine(f, p) {
   const length = Math.hypot(...f.lineEnd);
   if (length < 100 || length > 30000)
     throw new Error('鉄骨ラインの長さは100〜30,000 mmにしてください');
-  assertSteelSegmentInside(
-    [f.x, f.y, f.z],
-    f.lineEnd.map((v, i) => v + [f.x, f.y, f.z][i]),
-    p.building,
-    sectionRadius(section),
-  );
+  if (!f.lineEnd.map((v, i) => v + [f.x, f.y, f.z][i]).every(Number.isSafeInteger))
+    throw new Error('鉄骨ラインの座標が不正です');
   return f;
 }
 const cross = (a, b, c) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
@@ -564,17 +495,5 @@ export function newSteelFrame(p, shapeId, id = crypto.randomUUID()) {
     rotation: 0,
     membrane: { faces: [], color: '#edf4ef', opacity: 0.35 },
   };
-  // Find the first available in-bounds location; existing frames may intentionally overlap.
-  for (const z of [15000, p.building.length / 2, p.building.length - p.building.wingDepth / 2])
-    for (const x of [
-      p.building.mainWidth / 2,
-      (2 * p.building.mainWidth - p.building.overallWidth) / 2,
-    ]) {
-      f.x = Math.round(x);
-      f.z = Math.round(z);
-      try {
-        return validateFrame(f, p);
-      } catch {}
-    }
-  throw new Error('この形状は建物に収まりません。小さい形状を登録してください');
+  return validateFrame(f, p);
 }

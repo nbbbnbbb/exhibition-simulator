@@ -9,6 +9,8 @@ export default defineConfig({
     rolldownOptions: {
       output: {
         manualChunks(id) {
+          if (/examples[\\/]jsm[\\/]controls[\\/]TransformControls/.test(id))
+            return 'workplane-controls';
           if (/node_modules[\\/]three/.test(id)) return 'three';
         },
       },

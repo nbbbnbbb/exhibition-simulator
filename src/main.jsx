@@ -19,9 +19,10 @@ import { SteelLineFaceList, SteelLineFaceInspector } from './SteelLineFaces.jsx'
 import { detectSteelLineFaces, pruneSteelLineMembranes } from './steelLineFaces.js';
 import {
   DEFAULT_STEEL_LINE_SETTINGS,
-  STEEL_LINE_PLANES,
   newSteelLine,
   steelLineEndpoints,
+  steelPlaneCenter,
+  moveSteelPlane,
 } from './steelLinePlacement.js';
 import { arrangeArtworks } from './artworkArrangement.js';
 import {
@@ -273,14 +274,37 @@ function App() {
     [drawingSteelLines, setDrawingSteelLines] = useState(false),
     [steelLineStart, setSteelLineStart] = useState(null),
     [steelLinePreview, setSteelLinePreview] = useState(null);
-  const steelLineTool = drawingSteelLines ? { ...steelLineSettings, start: steelLineStart } : null;
+  const [steelLinePhase, setSteelLinePhase] = useState('plane');
+  const steelLineTool = drawingSteelLines
+    ? { ...steelLineSettings, start: steelLineStart, phase: steelLinePhase }
+    : null;
   useEffect(() => {
     if (!steelSections(project).some((section) => section.id === steelLineSettings.sectionId))
       setSteelLineSettings((s) => ({ ...s, sectionId: 'c65' }));
   }, [project, steelLineSettings.sectionId]);
   const cancelSteelLine = useCallback(() => {
     setDrawingSteelLines(false);
+    setSteelLinePhase('plane');
     setSteelLineStart(null);
+    setSteelLinePreview(null);
+  }, []);
+  const moveSteelWorkplane = useCallback(
+    (position) => setSteelLineSettings((s) => moveSteelPlane(s, position)),
+    [],
+  );
+  function changeSteelLineSettings(next) {
+    if (
+      drawingSteelLines &&
+      (next.plane !== steelLineSettings.plane ||
+        steelPlaneCenter(next).some((v, i) => v !== steelPlaneCenter(steelLineSettings)[i]))
+    ) {
+      setSteelLinePhase('plane');
+      setSteelLinePreview(null);
+    }
+    setSteelLineSettings(next);
+  }
+  const confirmSteelWorkplane = useCallback(() => {
+    setSteelLinePhase('draw');
     setSteelLinePreview(null);
   }, []);
   useEffect(cancelSteelLine, [project.activeLayoutId, modal]);
@@ -485,14 +509,11 @@ function App() {
     setInspectorTab('placement');
     const point = fromFrame?.kind === 'line' ? steelLineEndpoints(fromFrame)[1] : null;
     if (point)
-      setSteelLineSettings((s) => ({
-        ...s,
-        sectionId: fromFrame.sectionId,
-        offset: point[STEEL_LINE_PLANES.find((p) => p.id === s.plane).axis],
-      }));
+      setSteelLineSettings((s) => moveSteelPlane({ ...s, sectionId: fromFrame.sectionId }, point));
     setSteelLineStart(point);
     setSteelLinePreview(null);
     setDrawingSteelLines(true);
+    setSteelLinePhase('plane');
   }
   const commitSteelLinePoint = useCallback(
     (preview) => {
@@ -629,14 +650,19 @@ function App() {
         setSelectedSteelFrame(null);
         setMode('orbit');
       }
-      if (e.code === 'Enter' && drawingSteelLines) {
+      if (
+        e.code === 'Enter' &&
+        drawingSteelLines &&
+        ['CANVAS', 'BODY'].includes(e.target.tagName)
+      ) {
         e.preventDefault();
-        cancelSteelLine();
+        if (steelLinePhase === 'plane') confirmSteelWorkplane();
+        else cancelSteelLine();
       }
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
-  }, [modal, selected, selectedSteelFrame, drawingSteelLines, undo, redo, remove]);
+  }, [modal, selected, selectedSteelFrame, drawingSteelLines, steelLinePhase, undo, redo, remove]);
   function addArtwork(artworkId) {
     cancelSteelLine();
     const art = project.artworks.find((a) => a.id === artworkId);
@@ -1055,11 +1081,18 @@ function App() {
                 <SteelLineControls
                   project={project}
                   settings={steelLineSettings}
-                  onSettings={setSteelLineSettings}
+                  onSettings={changeSteelLineSettings}
                   active={drawingSteelLines}
                   start={steelLineStart}
                   onStart={() => startSteelLines()}
                   onStop={cancelSteelLine}
+                  phase={steelLinePhase}
+                  onConfirm={confirmSteelWorkplane}
+                  onMovePlane={() => {
+                    setSteelLinePhase('plane');
+                    setSteelLinePreview(null);
+                  }}
+                  onFocusPlane={() => scene.current?.focusSteelWorkplane()}
                 />
               }
               onRegister={() => setModal('frame-shape')}
@@ -1261,19 +1294,28 @@ function App() {
           <div className={`viewport view-${view}`}>
             {drawingSteelLines && (
               <div
-                className={`steel-line-banner ${steelLinePreview?.valid === false ? 'invalid' : ''}`}
+                className={`steel-line-banner ${steelLinePhase === 'draw' && steelLinePreview?.valid === false ? 'invalid' : ''}`}
                 role="status"
               >
-                <strong>{steelLineStart ? '終点をクリック' : '始点をクリック'} · 鉄骨ライン</strong>
+                <strong>
+                  {steelLinePhase === 'plane'
+                    ? '1. 作業平面をドラッグして配置'
+                    : `${steelLineStart ? '終点' : '始点'}をクリック · 鉄骨ライン`}
+                </strong>
                 <span>
-                  {steelLinePreview?.message || '作業面上の点を選択してください'}
+                  {steelLinePhase === 'plane'
+                    ? `面をドラッグ、矢印でXYZ移動 · 中心 ${steelPlaneCenter(steelLineSettings).join(' / ')} mm`
+                    : steelLinePreview?.message || '作業面上の点を選択してください'}
                   {steelLinePreview?.point && ` · ${steelLinePreview.point.join(' / ')} mm`}
                   {steelLinePreview?.length > 0 &&
                     ` · 長さ ${Math.round(steelLinePreview.length).toLocaleString()} mm`}
                   {steelLinePreview?.snapped ? ' · 端点に吸着' : ''}
                 </span>
-                <button className="button" onClick={cancelSteelLine}>
-                  配置を終了
+                <button
+                  className="button"
+                  onClick={steelLinePhase === 'plane' ? confirmSteelWorkplane : cancelSteelLine}
+                >
+                  {steelLinePhase === 'plane' ? '平面を確定して描く' : '配置を終了'}
                 </button>
               </div>
             )}
@@ -1318,6 +1360,7 @@ function App() {
                 steelLinePreview={steelLinePreview}
                 onSteelLinePreview={setSteelLinePreview}
                 onSteelLinePoint={commitSteelLinePoint}
+                onSteelWorkplaneMove={moveSteelWorkplane}
                 showRails={showRails}
                 onSelectPartition={selectPartition}
                 onPartitionMove={changePartition}
@@ -1578,6 +1621,13 @@ function App() {
                 scene.current?.windowView(side);
               }}
             />
+          ) : drawingSteelLines && steelLinePhase === 'plane' ? (
+            <div className="inspector-empty">
+              <h3>作業平面の位置を決める</h3>
+              <p>半透明の平面をドラッグして配置します。</p>
+              <p>赤：X方向 · 緑：高さY · 青：Z方向</p>
+              <p>位置を決めたら「この平面でラインを描く」で確定します。</p>
+            </div>
           ) : activeSteelLineFace ? (
             <SteelLineFaceInspector
               face={activeSteelLineFace}

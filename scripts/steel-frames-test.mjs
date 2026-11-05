@@ -146,7 +146,9 @@ try {
   await page.locator('.steel-frame-card').first().click();
   await field('フレーム中心 X', 0);
   await page.waitForTimeout(500);
-  assert.equal(frames(await storedProject(page))[0].x, moved.x);
+  assert.equal(frames(await storedProject(page))[0].x, 0);
+  await field('フレーム中心 X', moved.x);
+  await waitProject(page, (p) => frames(p)[0].x === moved.x);
   await field('フレーム回転角', 0);
   await waitProject(page, (p) => frames(p)[0].rotation === 0);
   await page.getByRole('button', { name: 'フレームを正面から確認', exact: true }).click();
@@ -176,7 +178,7 @@ try {
   await page.mouse.move(a.x + 45, a.y + 12, { steps: 8 });
   await page.mouse.up();
   p = await waitProject(page, (p) => frames(p)[0].x !== f.x || frames(p)[0].z !== f.z);
-  checks.push('out-of-bounds edits rejected and actual 3D frame drag committed');
+  checks.push('outside-building edits accepted and actual 3D frame drag committed');
   await page.screenshot({ path: `${output}/rectangle-3d.png`, fullPage: true });
   await page.getByRole('button', { name: '＋ 鉄骨フレームを追加', exact: true }).click();
   await waitProject(page, (p) => frames(p).length === 2);

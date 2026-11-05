@@ -75,7 +75,7 @@ test('回転と移動が全頂点・膜に追従し、ボックスの全6面を�
   assert.equal(membrane.material.opacity, 0.35);
   assert.equal(membrane.geometry.attributes.position.count, 6);
 });
-test('建物外・回転後のはみ出し・天井越え・断面より小さい外寸を拒否する', () => {
+test('建物外・床下・天井越えを許可し、断面より小さい外寸や不正値は拒否する', () => {
   const p = createProject(),
     f = newSteelFrame(p, 'rectangle');
   p.steelSections.push({
@@ -90,9 +90,6 @@ test('建物外・回転後のはみ出し・天井越え・断面より小さ�
     ],
   });
   for (const changes of [
-    { x: 0 },
-    { z: -100 },
-    { y: 4000 },
     { width: 100, sectionId: 'wide', height: 100 },
     { rotation: NaN },
     { width: Infinity },
@@ -100,10 +97,17 @@ test('建物外・回転後のはみ出し・天井越え・断面より小さ�
   ]) {
     assert.throws(() => validateFrame({ ...f, ...changes }, p));
   }
-  assert.throws(() => validateFrame({ ...f, x: 500, rotation: 45 }, p), /範囲外/);
+  for (const changes of [
+    { x: -50000 },
+    { z: -10000 },
+    { y: -5000 },
+    { y: 10000 },
+    { x: 500, rotation: 45 },
+  ])
+    assert.doesNotThrow(() => validateFrame({ ...f, ...changes }, p));
   assert.doesNotThrow(() => validateFrame({ ...f, rotation: 90 }, p));
 });
-test('L字の入り隅をまたぐ部材を、両端が建物内でも拒否する', () => {
+test('L字の入り隅をまたぐ部材も自由に配置できる', () => {
   const p = createProject();
   const shape = {
     id: 'corner',
@@ -132,7 +136,7 @@ test('L字の入り隅をまたぐ部材を、両端が建物内でも拒否す�
     depth: 5000,
     height: 1000,
   };
-  assert.throws(() => validateFrame(f, p), /範囲外/);
+  assert.doesNotThrow(() => validateFrame(f, p));
 });
 test('独自の台形を登録し、異なる寸法に拡縮してJSONで往復する', () => {
   const p = createProject();

@@ -42,6 +42,17 @@ export default function Plan({
   const x = b.mainWidth - b.overallWidth;
   const pad = mini ? 1300 : 3300;
   const sw = mini ? 150 : 70;
+  const steelPoints = [...(layout.steelFrames || []), ...(compare?.steelFrames || [])].flatMap(
+    (f) => frameGeometry(f, project).nodes,
+  );
+  const extentPoints = [
+    ...polygon(b).map(([x, z]) => [x, z]),
+    ...steelPoints.map(([x, , z]) => [x, z]),
+  ];
+  const minX = Math.min(...extentPoints.map((p) => p[0])),
+    maxX = Math.max(...extentPoints.map((p) => p[0]));
+  const minZ = Math.min(...extentPoints.map((p) => p[1])),
+    maxZ = Math.max(...extentPoints.map((p) => p[1]));
   useEffect(() => {
     const cancel = () => {
       if (steelDrag.current) {
@@ -460,7 +471,7 @@ export default function Plan({
       data-camera-z={camera?.z}
       ref={svg}
       className={mini ? 'plan-svg mini' : 'plan-svg'}
-      viewBox={`${x - pad} ${-pad} ${b.overallWidth + 2 * pad} ${b.length + 2 * pad}`}
+      viewBox={`${minX - pad} ${minZ - pad} ${maxX - minX + 2 * pad} ${maxZ - minZ + 2 * pad}`}
       role="img"
       aria-label={mini ? '現在地ミニマップ' : '寸法付き展示平面図'}
       onPointerMoveCapture={(e) => {
