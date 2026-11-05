@@ -2,6 +2,7 @@
 import { lightingDefaults, validateLighting } from './lighting.js';
 import { createRails } from './architecture.js';
 import { validateSteelProject } from './steelFrames.js';
+import { validateSteelLineMembranes } from './steelLineFaces.js';
 import { DEFAULT_LABELS, LABEL_FIELDS } from './artworkLabels.js';
 import {
   addSuppliedArtworks,
@@ -452,6 +453,7 @@ export function createProject() {
         lighting: lightingDefaults(),
         partitions: [],
         steelFrames: [],
+        steelLineMembranes: [],
         placements: [
           { id: 'p-1', artworkId: 'art-1', wallId: 'west', s: 6000, bottom: 950 },
           { id: 'p-2', artworkId: 'art-2', wallId: 'west', s: 8500, bottom: 1050 },
@@ -613,6 +615,7 @@ export function validateProject(d) {
         throw new Error('配置データが不正です');
   }
   validateSteelProject(d);
+  validateSteelLineMembranes(d);
   if (!d.layouts.some((l) => l.id === d.activeLayoutId))
     throw new Error('選択中のレイアウトがありません');
   return d;

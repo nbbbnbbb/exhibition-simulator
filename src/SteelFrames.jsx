@@ -10,7 +10,7 @@ import {
   sectionLoops,
 } from './steelFrames.js';
 
-function Field({ label, value, onChange, min = 0, max = 30000, unit = 'mm' }) {
+export function Field({ label, value, onChange, min = 0, max = 30000, unit = 'mm' }) {
   const [draft, set] = useState(value);
   useEffect(() => set(value), [value]);
   return (
@@ -69,6 +69,8 @@ export function SteelFrameLibrary({
   onAdd,
   onRegister,
   onRemoveShape,
+  lineControls,
+  lineFaces,
 }) {
   const shapes = frameShapes(project),
     [shapeId, setShape] = useState('rectangle');
@@ -78,6 +80,8 @@ export function SteelFrameLibrary({
   return (
     <div className="steel-library">
       <p className="muted">軽量鉄骨を自由に配置し、面ごとにビニール膜を貼ります。</p>
+      {lineControls}
+      {lineFaces}
       <label className="select-label">
         組立形状
         <select
@@ -117,8 +121,15 @@ export function SteelFrameLibrary({
           >
             <strong>{f.name}</strong>
             <span>
-              {f.width.toLocaleString()} × {f.height.toLocaleString()}
-              {f.depth ? ` × ${f.depth.toLocaleString()}` : ''} mm
+              {f.kind === 'line' ? (
+                `ライン長 ${Math.round(Math.hypot(...f.lineEnd)).toLocaleString()}`
+              ) : (
+                <>
+                  {f.width.toLocaleString()} × {f.height.toLocaleString()}
+                  {f.depth ? ` × ${f.depth.toLocaleString()}` : ''}
+                </>
+              )}{' '}
+              mm
             </span>
             <small>
               {steelSections(project).find((s) => s.id === f.sectionId)?.name} · 膜{' '}

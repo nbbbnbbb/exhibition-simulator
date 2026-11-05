@@ -3,6 +3,7 @@ import { walls, polygon, format, fitPartition, partitionGeometry } from './domai
 import { previewPlacement, previewMove, pickPlanWall } from './artworkPlacement.js';
 import { artworkLabelRows } from './artworkLabels.js';
 import { frameGeometry, validateFrame } from './steelFrames.js';
+import { detectSteelLineFaces } from './steelLineFaces.js';
 export default function Plan({
   project,
   selected,
@@ -18,6 +19,8 @@ export default function Plan({
   selectedSteelFrame,
   onSelectSteelFrame,
   onSteelFrameMove,
+  selectedSteelLineFace,
+  onSelectSteelLineFace,
   showRails = false,
   placingArtworkId,
   movingPlacementId,
@@ -376,7 +379,11 @@ export default function Plan({
         onLostPointerCapture={steelUp}
       >
         <title>
-          {f.name} · {format(f.width)} × {format(f.height)} mm
+          {f.name} ·{' '}
+          {f.kind === 'line'
+            ? format(Math.hypot(...f.lineEnd))
+            : `${format(f.width)} × ${format(f.height)}`}{' '}
+          mm
         </title>
         {!ghost &&
           f.membrane.faces.map((index) => (
@@ -414,6 +421,36 @@ export default function Plan({
           </g>
         ))}
       </g>
+    );
+  };
+  const lineFace = (face, source, ghost = false) => {
+    const membrane = source.steelLineMembranes?.find((m) => m.faceId === face.id);
+    const path = [face, ...face.holes]
+      .map((loop) => `M${loop.points.map((p) => `${p[0]},${p[2]}`).join('L')}Z`)
+      .join(' ');
+    return (
+      <path
+        key={`${ghost ? 'ghost-' : ''}${face.id}`}
+        data-steel-line-face-id={ghost ? undefined : face.id}
+        d={path}
+        fillRule="evenodd"
+        fill={ghost ? 'none' : membrane?.color || '#a4bdaf'}
+        fillOpacity={membrane?.opacity ?? 0.05}
+        stroke={ghost ? '#ab7cba' : selectedSteelLineFace === face.id ? '#b68246' : '#799b8b'}
+        strokeWidth={mini ? 70 : 35}
+        strokeDasharray={ghost ? '180 100' : undefined}
+        onPointerDown={
+          ghost
+            ? undefined
+            : (e) => {
+                if (e.button !== 0) return;
+                e.stopPropagation();
+                onSelectSteelLineFace?.(face.id);
+              }
+        }
+      >
+        <title>{face.name}</title>
+      </path>
     );
   };
   return (
@@ -529,6 +566,11 @@ export default function Plan({
       )}
       {compare?.partitions.map((p) => part(p, true))}
       {layout.partitions.map((p) => part(p))}
+      {compare &&
+        detectSteelLineFaces(compare.steelFrames || []).map((face) =>
+          lineFace(face, compare, true),
+        )}
+      {detectSteelLineFaces(layout.steelFrames).map((face) => lineFace(face, layout))}
       {compare?.steelFrames?.map((f) => steel(f, true))}
       {layout.steelFrames?.map((f) => steel(f))}
       {compare?.placements.map((p) => art(p, true))}
