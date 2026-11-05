@@ -54,7 +54,8 @@ export function usePlanWindow(onBlocked) {
 }
 
 const INITIAL_VIEW = { zoom: 1, x: 0, y: 0 };
-const objectSelector = '.plan-art, .plan-partition, .plan-steel-frame, [data-steel-line-face-id]';
+const objectSelector =
+  '.plan-art, .plan-partition, .plan-steel-frame, .plan-scene-object, [data-steel-line-face-id]';
 
 export default function PlanWindow({ popup, planProps, onUndo, onRedo, canUndo, canRedo }) {
   const [view, setView] = useState(INITIAL_VIEW);

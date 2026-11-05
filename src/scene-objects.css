@@ -1,0 +1,177 @@
+.library > .sidebar-tabs {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 2px;
+  padding-inline: 5px;
+}
+.library > .sidebar-tabs small {
+  padding-inline: 2px;
+}
+.library > .sidebar-tabs > button {
+  flex-direction: column;
+  gap: 3px;
+  line-height: 1.3;
+}
+.scene-object-library {
+  padding: 16px;
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+}
+.scene-object-inspector {
+  padding: 20px 18px;
+  overflow: auto;
+}
+.scene-object-library .muted {
+  line-height: 1.8;
+  margin: 14px 0;
+}
+.scene-object-library h3 {
+  margin: 24px 0 12px;
+  font-size: 12px;
+}
+.scene-object-inspector h3 {
+  margin: 0 0 20px;
+}
+.scene-object-inspector h4 {
+  font-size: 11px;
+  margin: 24px 0 12px;
+}
+.object-kind-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--line);
+}
+.object-kind-tabs button {
+  padding: 9px 6px;
+  flex: 1;
+  font-size: 11px;
+  border-bottom: 2px solid transparent;
+}
+.object-kind-tabs button.active {
+  color: var(--green);
+  border-bottom-color: var(--green);
+}
+.object-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 14px 0;
+}
+.object-fields > * {
+  min-width: 0;
+}
+.object-appearance {
+  margin: 18px 0;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  font-size: 11px;
+}
+.object-appearance label {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+}
+.object-appearance label:last-child {
+  flex: 1;
+}
+.object-appearance input[type='range'] {
+  width: 100%;
+  min-width: 70px;
+  accent-color: var(--green);
+}
+.object-appearance input[type='color'] {
+  width: 35px;
+  height: 28px;
+  padding: 1px;
+}
+.object-appearance output {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+.silhouette-choices {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+  margin: 12px 0;
+}
+.silhouette-choices button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 3px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: #808080;
+}
+.silhouette-choices svg {
+  width: 100%;
+  height: 65px;
+}
+.silhouette-choices span {
+  font-size: 9px;
+}
+.silhouette-choices button.active {
+  border-color: var(--green);
+  background: #e9eee1;
+  color: #626d5c;
+}
+.object-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 12px;
+}
+.object-actions > * {
+  flex: 1;
+  padding-inline: 7px;
+}
+.scene-object-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.scene-object-list button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  text-align: left;
+  font-size: 11px;
+}
+.scene-object-list button.active {
+  background: #e9eee1;
+  border-color: var(--green);
+}
+.scene-object-list small {
+  display: block;
+  margin-top: 5px;
+  font-size: 9px;
+  color: #7d8578;
+}
+.outline-editor svg {
+  width: 100%;
+  max-height: 190px;
+  cursor: crosshair;
+  touch-action: none;
+}
+.outline-editor .button {
+  font-size: 10px;
+}
+.object-error {
+  color: #aa3b2d;
+  font-size: 11px;
+  line-height: 1.7;
+}
+.plan-scene-object {
+  cursor: grab;
+}
+.plan-scene-object:active {
+  cursor: grabbing;
+}
+.scene-object-inspector .select-label {
+  margin-bottom: 12px;
+}

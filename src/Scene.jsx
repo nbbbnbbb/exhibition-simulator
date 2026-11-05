@@ -13,6 +13,8 @@ import {
 } from './artworkPlacement.js';
 import { makeArtworkLabel } from './artworkLabels3D.js';
 import { pickContextObject } from './objectPicking.js';
+import { makeSceneObject } from './SceneObjects3D.js';
+import { validateSceneObject, objectFootprint } from './sceneObjects.js';
 import { pickPartitionRail, previewPartition } from './partitionPlacement.js';
 import { makeSteelFrame } from './SteelFrames3D.js';
 import { makeSteelLineFace } from './SteelLineFaces3D.js';
@@ -51,6 +53,9 @@ export const Scene = forwardRef(function Scene(
     displaySettings,
     cutawayRoof,
     eye,
+    selectedSceneObject,
+    onSelectSceneObject,
+    onSceneObjectMove,
     selectedPartition,
     selectedSteelFrame,
     onSelectSteelFrame,
@@ -101,6 +106,9 @@ export const Scene = forwardRef(function Scene(
     displaySettings,
     cutawayRoof,
     eye,
+    selectedSceneObject,
+    onSelectSceneObject,
+    onSceneObjectMove,
     selectedPartition,
     selectedSteelFrame,
     onSelectSteelFrame,
@@ -145,6 +153,8 @@ export const Scene = forwardRef(function Scene(
         project.layouts.find((l) => l.id === project.activeLayoutId)?.partitions,
         compare?.placements,
         compare?.partitions,
+        project.layouts.find((l) => l.id === project.activeLayoutId)?.sceneObjects,
+        compare?.sceneObjects,
         project.frameShapes,
         project.steelSections,
         project.layouts.find((l) => l.id === project.activeLayoutId)?.steelFrames,
@@ -187,6 +197,32 @@ export const Scene = forwardRef(function Scene(
         m(pos.y),
         m(pos.z) + w.normal.z * distance,
       );
+      e.controls.update();
+      e.skipFit = true;
+    },
+    focusSceneObject(id) {
+      const e = engine.current,
+        c = current.current;
+      const object = c.project.layouts
+        .find((l) => l.id === c.project.activeLayoutId)
+        .sceneObjects.find((o) => o.id === id);
+      if (!e || !object) return;
+      const horizontal = object.kind === 'plane' && object.orientation === 'horizontal';
+      const angle = (object.rotation * Math.PI) / 180;
+      const distance = Math.max(
+        2,
+        (Math.max(object.width, horizontal ? 0 : object.height, object.depth) / 1000) * 1.8,
+      );
+      e.controls.target.set(
+        m(object.x),
+        m(object.y + (horizontal ? 0 : object.height / 2)),
+        m(object.z),
+      );
+      e.camera.position
+        .copy(e.controls.target)
+        .add(
+          new THREE.Vector3(Math.sin(angle) * distance, distance * 0.2, Math.cos(angle) * distance),
+        );
       e.controls.update();
       e.skipFit = true;
     },
@@ -514,9 +550,22 @@ export const Scene = forwardRef(function Scene(
         const layout = current.current.project.layouts.find(
           (l) => l.id === current.current.project.activeLayoutId,
         );
-        const steelNodes = layout.steelFrames.flatMap(
-          (f) => frameGeometry(f, current.current.project).nodes,
-        );
+        const steelNodes = [
+          ...layout.steelFrames.flatMap((f) => frameGeometry(f, current.current.project).nodes),
+          ...(layout.sceneObjects || []).flatMap((object) =>
+            objectFootprint(object).flatMap(([x, z]) => [
+              [x, object.y, z],
+              [
+                x,
+                object.y +
+                  (object.kind === 'plane' && object.orientation === 'horizontal'
+                    ? 0
+                    : object.height),
+                z,
+              ],
+            ]),
+          ),
+        ];
         if (
           steelNodes.some(
             ([x, y, z]) =>
@@ -864,6 +913,29 @@ export const Scene = forwardRef(function Scene(
           true,
         )
         .find((h) => h.object.userData.placementId);
+      const worldHits = ray.intersectObjects(world.children, true);
+      const sceneTarget = pickContextObject(
+        worldHits,
+        ray.intersectObjects(
+          artGroup.children.filter((g) => g.visible),
+          true,
+        ),
+      );
+      if (c.mode !== 'walk' && sceneTarget?.type === 'scene-object') {
+        const object = c.project.layouts
+          .find((l) => l.id === c.project.activeLayoutId)
+          .sceneObjects.find((o) => o.id === sceneTarget.id);
+        const sceneHit = worldHits.find((h) => h.object.userData.sceneObjectId === object.id);
+        c.onSelectSceneObject?.(object.id);
+        const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -sceneHit.point.y);
+        const start = new THREE.Vector3();
+        if (!ray.ray.intersectPlane(plane, start)) return;
+        drag = { type: 'scene-object', id: object.id, p: object, plane, start, next: object };
+        controls.enabled = false;
+        renderer.domElement.setPointerCapture(ev.pointerId);
+        ev.stopImmediatePropagation();
+        return;
+      }
       const wallHit = ray
         .intersectObjects(world.children, true)
         .find((h) => h.object.userData.partitionId);
@@ -1027,7 +1099,7 @@ export const Scene = forwardRef(function Scene(
       cast(ev);
       const point = new THREE.Vector3();
       if (!ray.ray.intersectPlane(drag.plane, point)) return;
-      if (drag.type === 'steel') {
+      if (drag.type === 'steel' || drag.type === 'scene-object') {
         const c = current.current,
           step = ev.altKey ? 1 : 10;
         const next = {
@@ -1036,9 +1108,14 @@ export const Scene = forwardRef(function Scene(
           z: Math.round((drag.p.z + (point.z - drag.start.z) * 1000) / step) * step,
         };
         try {
-          validateFrame(next, c.project);
+          if (drag.type === 'scene-object') validateSceneObject(next);
+          else validateFrame(next, c.project);
           drag.next = next;
-          const group = world.children.find((o) => o.userData.steelFrameId === next.id);
+          const group = world.children.find(
+            (o) =>
+              o.userData[drag.type === 'scene-object' ? 'sceneObjectId' : 'steelFrameId'] ===
+              next.id,
+          );
           group?.position.set(m(next.x), m(next.y), m(next.z));
         } catch {}
         return;
@@ -1108,11 +1185,16 @@ export const Scene = forwardRef(function Scene(
               current.current.onNotice(d.preview?.message || '移動を取り消しました');
           }
           current.current.onMoveEnd?.();
-        } else if (d.type === 'steel') {
-          const mesh = world.children.find((o) => o.userData.steelFrameId === d.id);
+        } else if (d.type === 'steel' || d.type === 'scene-object') {
+          const mesh = world.children.find(
+            (o) =>
+              o.userData[d.type === 'scene-object' ? 'sceneObjectId' : 'steelFrameId'] === d.id,
+          );
           mesh?.position.set(m(d.p.x), m(d.p.y), m(d.p.z));
           if (ev?.type === 'pointerup' && (d.next.x !== d.p.x || d.next.z !== d.p.z))
-            current.current.onSteelFrameMove?.(d.id, { x: d.next.x, z: d.next.z });
+            (d.type === 'scene-object'
+              ? current.current.onSceneObjectMove
+              : current.current.onSteelFrameMove)?.(d.id, { x: d.next.x, z: d.next.z });
         } else if (ev?.type === 'pointerup' && d.next.s !== d.p.s)
           current.current.onPartitionMove(d.id, d.next);
       }
@@ -1121,7 +1203,13 @@ export const Scene = forwardRef(function Scene(
       if (drag?.type === 'artwork') up();
     };
     e.cancelObjectDrag = () => {
-      if (drag?.type === 'artwork' || drag?.type === 'steel' || drag?.type === 'workplane') up();
+      if (
+        drag?.type === 'artwork' ||
+        drag?.type === 'steel' ||
+        drag?.type === 'scene-object' ||
+        drag?.type === 'workplane'
+      )
+        up();
       if (planeControls.dragging) {
         e.cancelingPlane = true;
         planeControls.reset();
@@ -1588,6 +1676,11 @@ export const Scene = forwardRef(function Scene(
       outline.rotation.y = g.rotation;
       e.ghostGroup.add(outline);
     }
+    for (const object of layout.sceneObjects || [])
+      e.world.add(makeSceneObject(object, object.id === selectedSceneObject));
+    for (const object of compare?.sceneObjects || [])
+      e.ghostGroup.add(makeSceneObject(object, false, true));
+    host.current.dataset.sceneObjectCount = String(layout.sceneObjects?.length || 0);
     for (const f of layout.steelFrames || []) {
       const group = makeSteelFrame(f, project);
       if (f.id === selectedSteelFrame)
@@ -1804,6 +1897,7 @@ export const Scene = forwardRef(function Scene(
     selectedSteelFrame,
     selectedSteelLineFace,
     movingPlacementIds,
+    selectedSceneObject,
   ]);
   useEffect(() => {
     const e = engine.current;

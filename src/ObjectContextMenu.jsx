@@ -8,6 +8,7 @@ export default function ObjectContextMenu({
   steelFrame,
   steelLineFace,
   membraneFace,
+  sceneObject,
   onClose,
   onInfo,
   onDelete,
@@ -45,30 +46,35 @@ export default function ObjectContextMenu({
   const name =
     art?.title ||
     partition?.name ||
+    sceneObject?.name ||
     (membraneFace
       ? `${steelFrame.name} / ${membraneFace.name}の膜`
       : steelLineFace
         ? `${steelLineFace.name}の膜`
         : steelFrame?.name);
-  const menuLabel = art
-    ? '作品のメニュー'
-    : partition
-      ? '可動壁のメニュー'
-      : isMembrane
-        ? '膜のメニュー'
-        : isLine
-          ? '鉄骨ラインのメニュー'
-          : '鉄骨フレームのメニュー';
-  const deleteLabel = art
-    ? '作品の配置を削除'
-    : partition
-      ? '可動壁を削除'
-      : isMembrane
-        ? 'この面の膜を削除'
-        : isLine
-          ? '鉄骨ラインを削除'
-          : '鉄骨フレームを削除';
-  const dimensions = art || partition || steelFrame;
+  const menuLabel = sceneObject
+    ? '形状・人物のメニュー'
+    : art
+      ? '作品のメニュー'
+      : partition
+        ? '可動壁のメニュー'
+        : isMembrane
+          ? '膜のメニュー'
+          : isLine
+            ? '鉄骨ラインのメニュー'
+            : '鉄骨フレームのメニュー';
+  const deleteLabel = sceneObject
+    ? '形状・人物の配置を削除'
+    : art
+      ? '作品の配置を削除'
+      : partition
+        ? '可動壁を削除'
+        : isMembrane
+          ? 'この面の膜を削除'
+          : isLine
+            ? '鉄骨ラインを削除'
+            : '鉄骨フレームを削除';
+  const dimensions = art || partition || steelFrame || sceneObject;
   return (
     <div
       ref={root}
