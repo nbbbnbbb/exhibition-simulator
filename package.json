@@ -12,6 +12,7 @@
     "preview": "vite preview --host 127.0.0.1",
     "test": "node --test tests/domain.test.mjs tests/lighting.test.mjs tests/catalog.test.mjs tests/partition-lighting.test.mjs tests/architecture.test.mjs tests/artwork-placement.test.mjs tests/artwork-arrangement.test.mjs tests/steel-frames.test.mjs tests/steel-lines.test.mjs tests/steel-line-faces.test.mjs",
     "test:steel-lines": "node scripts/steel-lines-test.mjs",
+    "test:steel-snapping": "node scripts/steel-snapping-test.mjs",
     "test:steel-line-faces": "node scripts/steel-line-faces-test.mjs",
     "test:steel": "node scripts/steel-frames-test.mjs",
     "test:lighting": "node scripts/lighting-test.mjs",

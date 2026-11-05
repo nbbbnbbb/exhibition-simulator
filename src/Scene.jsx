@@ -12,6 +12,12 @@ import { makeSteelLineFace } from './SteelLineFaces3D.js';
 import { detectSteelLineFaces } from './steelLineFaces.js';
 import { validateFrame, frameGeometry } from './steelFrames.js';
 import {
+  steelSnapGeometry,
+  snapSteelPoint,
+  steelOrthogonalConstraint,
+  constrainSteelPoint,
+} from './steelSnapping.js';
+import {
   pointOnSteelPlane,
   previewSteelLine,
   steelLineEndpoints,
@@ -71,7 +77,9 @@ export const Scene = forwardRef(function Scene(
   const host = useRef();
   const engine = useRef();
   const current = useRef();
+  const snapGeometry = useMemo(() => steelSnapGeometry(project), [project]);
   current.current = {
+    snapGeometry,
     project,
     selected,
     compare,
@@ -528,11 +536,55 @@ export const Scene = forwardRef(function Scene(
       host.current.dataset.steelWorkplaneCenter = position.join(',');
       current.current.onSteelWorkplaneMove?.(position);
     };
+    function snappingProjection() {
+      const rect = renderer.domElement.getBoundingClientRect();
+      return (point) => {
+        const v = new THREE.Vector3(...point.map(m));
+        const w = -v.clone().applyMatrix4(camera.matrixWorldInverse).z;
+        if (w <= 0) return null;
+        v.project(camera);
+        return {
+          x: rect.left + ((v.x + 1) * rect.width) / 2,
+          y: rect.top + ((1 - v.y) * rect.height) / 2,
+          depth: v.z,
+          w,
+        };
+      };
+    }
+    let planeHandleOrigin = null;
+    function positionWorkplane(position, constraint = null) {
+      const c = current.current;
+      const snap = snapSteelPoint(position, c.snapGeometry.steel, snappingProjection(), {
+        enabled: c.steelLineTool?.snap !== false,
+        constraint,
+      });
+      workPlaneGroup.position.set(...(snap?.point || position).map(m));
+      const preview = snap
+        ? { point: snap.point, snapped: true, snapLabel: snap.label, valid: true }
+        : null;
+      if (JSON.stringify(preview) !== JSON.stringify(c.steelLinePreview))
+        c.onSteelLinePreview?.(preview);
+      publishWorkplane();
+    }
     planeControls.addEventListener('dragging-changed', (event) => {
       controls.enabled = !event.value && !drag;
+      planeHandleOrigin = event.value
+        ? workPlaneGroup.position.toArray().map((v) => Math.round(v * 1000))
+        : null;
       host.current.dataset.steelWorkplaneDragging = String(event.value);
     });
-    planeControls.addEventListener('objectChange', publishWorkplane);
+    planeControls.addEventListener('objectChange', () => {
+      const position = workPlaneGroup.position.toArray().map((v) => Math.round(v * 1000));
+      if (e.cancelingPlane || !planeControls.dragging) {
+        publishWorkplane();
+        return;
+      }
+      const axes = [0, 1, 2].filter((i) => planeControls.axis?.includes(['X', 'Y', 'Z'][i]));
+      positionWorkplane(
+        position,
+        planeHandleOrigin && axes.length ? { origin: planeHandleOrigin, axes } : null,
+      );
+    });
     e.fit();
     const resize = new ResizeObserver(() => {
       const r = host.current?.getBoundingClientRect();
@@ -614,30 +666,31 @@ export const Scene = forwardRef(function Scene(
       cast(ev);
       e.lastSteelPointer = { clientX: ev.clientX, clientY: ev.clientY, altKey: ev.altKey };
       let point = pointOnSteelPlane(
-          ray.ray.origin.toArray().map((v) => v * 1000),
-          ray.ray.direction.toArray(),
-          tool,
-          ev.altKey ? 1 : 10,
-        ),
-        snapped = false,
-        closest = 12;
-      const rect = renderer.domElement.getBoundingClientRect();
-      const layout = c.project.layouts.find((l) => l.id === c.project.activeLayoutId);
-      for (const frame of layout.steelFrames)
-        for (const node of frameGeometry(frame, c.project).nodes) {
-          const projected = new THREE.Vector3(...node.map(m)).project(camera);
-          if (projected.z < -1 || projected.z > 1) continue;
-          const distance = Math.hypot(
-            ((projected.x - pointer.x) * rect.width) / 2,
-            ((projected.y - pointer.y) * rect.height) / 2,
-          );
-          if (distance < closest) {
-            closest = distance;
-            point = node.map(Math.round);
-            snapped = true;
-          }
-        }
-      const preview = previewSteelLine(c.project, tool, point, snapped);
+        ray.ray.origin.toArray().map((v) => v * 1000),
+        ray.ray.direction.toArray(),
+        tool,
+        ev.altKey || tool.snap === false ? 1 : 10,
+      );
+      const constraint = steelOrthogonalConstraint(tool, point);
+      const snap =
+        tool.orthogonal && tool.start && !point
+          ? null
+          : snapSteelPoint(
+              point || steelPlaneCenter(tool),
+              c.snapGeometry.all,
+              snappingProjection(),
+              {
+                cursor: { x: ev.clientX, y: ev.clientY },
+                constraint,
+                enabled: tool.snap !== false,
+              },
+            );
+      point = snap?.point || constrainSteelPoint(point, constraint);
+      const preview = {
+        ...previewSteelLine(c.project, tool, point, !!snap),
+        snapLabel: snap?.label,
+      };
+      if (constraint) preview.orthogonalAxis = constraint.axes[0];
       if (JSON.stringify(preview) !== JSON.stringify(c.steelLinePreview))
         c.onSteelLinePreview?.(preview);
       return preview;
@@ -657,9 +710,14 @@ export const Scene = forwardRef(function Scene(
       const c = current.current;
       if (c.steelLineTool?.phase === 'plane') {
         renderer.domElement.focus();
-        planeControls.setTranslationSnap(ev.altKey ? 0.001 : 0.01);
-        if (planeControls.axis !== null) return;
+        planeControls.setTranslationSnap(
+          ev.altKey || c.steelLineTool.snap === false ? 0.001 : 0.01,
+        );
         cast(ev);
+        // Refresh picking after a camera jump, including clicks without a preceding hover.
+        planeHandles.updateMatrixWorld(true);
+        planeControls.pointerHover({ x: pointer.x, y: pointer.y, button: ev.button });
+        if (planeControls.axis !== null) return;
         const hit = ray.intersectObject(workPlaneSurface)[0];
         if (!hit) return;
         const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(
@@ -818,16 +876,15 @@ export const Scene = forwardRef(function Scene(
         cast(ev);
         const point = new THREE.Vector3();
         if (!ray.ray.intersectPlane(drag.plane, point)) return;
-        const step = ev.altKey ? 1 : 10,
+        const step = ev.altKey || current.current.steelLineTool.snap === false ? 1 : 10,
           position = drag.origin.clone().add(point.sub(drag.start));
-        workPlaneGroup.position.set(
-          ...position.toArray().map((v) => (Math.round((v * 1000) / step) * step) / 1000),
-        );
-        publishWorkplane();
+        positionWorkplane(position.toArray().map((v) => Math.round((v * 1000) / step) * step));
         return;
       }
       if (current.current.steelLineTool?.phase === 'plane') {
-        planeControls.setTranslationSnap(ev.altKey ? 0.001 : 0.01);
+        planeControls.setTranslationSnap(
+          ev.altKey || current.current.steelLineTool.snap === false ? 0.001 : 0.01,
+        );
         host.current.dataset.steelWorkplaneAxis = planeControls.axis || '';
         return;
       }
@@ -919,7 +976,10 @@ export const Scene = forwardRef(function Scene(
         drag = null;
         controls.enabled = true;
         if (d.type === 'workplane') {
-          if (ev?.type !== 'pointerup') workPlaneGroup.position.copy(d.origin);
+          if (ev?.type !== 'pointerup') {
+            workPlaneGroup.position.copy(d.origin);
+            current.current.onSteelLinePreview?.(null);
+          }
           publishWorkplane();
           host.current.dataset.steelWorkplaneDragging = 'false';
           return;
@@ -952,7 +1012,10 @@ export const Scene = forwardRef(function Scene(
     e.cancelObjectDrag = () => {
       if (drag?.type === 'artwork' || drag?.type === 'steel' || drag?.type === 'workplane') up();
       if (planeControls.dragging) {
+        e.cancelingPlane = true;
         planeControls.reset();
+        e.cancelingPlane = false;
+        current.current.onSteelLinePreview?.(null);
         planeControls.pointerUp(null);
         controls.enabled = true;
       }
@@ -1689,7 +1752,13 @@ export const Scene = forwardRef(function Scene(
     host.current.dataset.steelLinePoint = preview?.point?.join(',') || '';
     host.current.dataset.steelLineStart = steelLineTool?.start?.join(',') || '';
     host.current.dataset.steelLineSnapped = String(preview?.snapped === true);
-    if (!steelLineTool || steelLineTool.phase !== 'draw') return;
+    host.current.dataset.steelLineSnapLabel = preview?.snapLabel || '';
+    host.current.dataset.steelLineOrthogonalAxis =
+      preview?.orthogonalAxis === undefined ? '' : ['X', 'Y', 'Z'][preview.orthogonalAxis];
+    host.current.dataset.steelWorkplaneSnapped = String(
+      steelLineTool?.phase === 'plane' && !!preview?.snapped,
+    );
+    if (!steelLineTool) return;
     const color = preview?.valid === false ? '#ce513b' : '#4d9c68';
     const marker = (point, c) => {
       const mesh = new THREE.Mesh(
@@ -1700,6 +1769,10 @@ export const Scene = forwardRef(function Scene(
       mesh.renderOrder = 10;
       group.add(mesh);
     };
+    if (steelLineTool.phase === 'plane') {
+      if (preview?.snapped) marker(preview.point, '#168b9a');
+      return;
+    }
     if (steelLineTool.start) marker(steelLineTool.start, '#b68b53');
     if (preview?.point) marker(preview.point, color);
     if (preview?.frame && preview.length > 0) {

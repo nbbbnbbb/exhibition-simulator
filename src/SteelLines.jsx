@@ -112,6 +112,30 @@ export function SteelLineControls({
       <label className="check-label">
         <input
           type="checkbox"
+          aria-label="鉄骨配置のスナップ"
+          checked={settings.snap !== false}
+          onChange={(e) => onSettings({ ...settings, snap: e.target.checked })}
+        />
+        スナップ
+      </label>
+      <p className="field-note">
+        平面の中心は既存鉄骨に、ラインは建物・鉄骨の端点や辺に吸着。OFFで1 mm刻み。
+      </p>
+      <label className="check-label">
+        <input
+          type="checkbox"
+          aria-label="鉄骨ラインの直交モード"
+          checked={!!settings.orthogonal}
+          onChange={(e) => onSettings({ ...settings, orthogonal: e.target.checked })}
+        />
+        直交モード
+      </label>
+      <p className="field-note">
+        始点から作業平面の軸方向へ描画。ONの間はスナップも直交を保ちます。
+      </p>
+      <label className="check-label">
+        <input
+          type="checkbox"
           aria-label="鉄骨ラインを連続配置"
           checked={settings.continuous}
           onChange={(e) => onSettings({ ...settings, continuous: e.target.checked })}
@@ -124,7 +148,8 @@ export function SteelLineControls({
         </button>
       )}
       <p className="field-note">
-        平面の位置を決めたら始点・終点をクリック。建物の外や床下・天井より上にも配置できます。端点に吸着、Altで1
+        平面の位置を決めたら始点・終点をクリック。建物の外や床下・天井より上にも配置できます。
+        スナップと直交を切り替えできます。Altで1
         mm刻み。右ドラッグで視点回転。Enterで確定／終了、Escで中止。
       </p>
       {active && start && (

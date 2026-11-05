@@ -293,6 +293,8 @@ function App() {
     [],
   );
   function changeSteelLineSettings(next) {
+    if (next.snap !== steelLineSettings.snap || next.orthogonal !== steelLineSettings.orthogonal)
+      setSteelLinePreview(null);
     if (
       drawingSteelLines &&
       (next.plane !== steelLineSettings.plane ||
@@ -1309,7 +1311,13 @@ function App() {
                   {steelLinePreview?.point && ` · ${steelLinePreview.point.join(' / ')} mm`}
                   {steelLinePreview?.length > 0 &&
                     ` · 長さ ${Math.round(steelLinePreview.length).toLocaleString()} mm`}
-                  {steelLinePreview?.snapped ? ' · 端点に吸着' : ''}
+                  {steelLinePreview?.snapped
+                    ? ` · ${steelLinePreview.snapLabel || '端点'}に吸着`
+                    : ''}
+                  {steelLinePhase === 'draw' &&
+                    ` · スナップ${steelLineSettings.snap ? 'ON' : 'OFF'} / 直交${steelLineSettings.orthogonal ? 'ON' : 'OFF'}`}
+                  {steelLinePreview?.orthogonalAxis !== undefined &&
+                    ` (${['X', 'Y', 'Z'][steelLinePreview.orthogonalAxis]}方向)`}
                 </span>
                 <button
                   className="button"
