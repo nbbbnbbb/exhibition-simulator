@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createProject, validateProject } from '../src/domain.js';
+import { DEFAULT_DISPLAY_SETTINGS } from '../src/displaySettings.js';
+import { DEFAULT_STEEL_LINE_SETTINGS } from '../src/steelLinePlacement.js';
 import {
   cloudConfig,
   cloudURL,
@@ -37,17 +39,19 @@ test('旧プロジェクトに表示設定を補い、独立したON/OFFと一�
   const p = createProject();
   delete p.displaySettings;
   validateProject(p);
-  assert.deepEqual(p.displaySettings, {
-    beams: true,
-    mezzanine: true,
-    lightingRails: true,
-    artworkList: 'cards',
-  });
+  assert.deepEqual(p.displaySettings, DEFAULT_DISPLAY_SETTINGS);
   p.displaySettings = {
+    ...DEFAULT_DISPLAY_SETTINGS,
     beams: false,
     mezzanine: true,
     lightingRails: false,
     artworkList: 'compact',
+    floorLines: false,
+    grid: true,
+    dimensions: false,
+    cutawayRoof: false,
+    view: 'three',
+    eyeHeight: 1800,
   };
   assert.deepEqual(
     validateProject(JSON.parse(JSON.stringify(p))).displaySettings,
@@ -55,6 +59,49 @@ test('旧プロジェクトに表示設定を補い、独立したON/OFFと一�
   );
   p.displaySettings.beams = 'false';
   assert.throws(() => validateProject(p), /表示設定/);
+});
+
+test('旧データの作業設定を移行し、表示・鉄骨の全設定を独立して保存する', () => {
+  const p = createProject();
+  delete p.steelLineSettings;
+  p.displaySettings = { beams: false, artworkList: 'compact' };
+  validateProject(p);
+  assert.deepEqual(p.displaySettings, {
+    ...DEFAULT_DISPLAY_SETTINGS,
+    beams: false,
+    artworkList: 'compact',
+  });
+  assert.deepEqual(p.steelLineSettings, DEFAULT_STEEL_LINE_SETTINGS);
+  p.steelLineSettings = {
+    plane: 'xy',
+    offset: -200,
+    center: [1000, 2000, -200],
+    sectionId: 'c65',
+    continuous: false,
+    snap: false,
+    orthogonal: true,
+  };
+  const next = validateProject(JSON.parse(JSON.stringify(p)));
+  assert.deepEqual(next, p);
+  next.steelLineSettings.center[0] = 999;
+  assert.equal(p.steelLineSettings.center[0], 1000);
+  for (const [group, key, value] of [
+    ['displaySettings', 'floorLines', 'false'],
+    ['displaySettings', 'grid', 1],
+    ['displaySettings', 'dimensions', null],
+    ['displaySettings', 'cutawayRoof', 0],
+    ['displaySettings', 'view', 'invalid'],
+    ['displaySettings', 'eyeHeight', 799],
+    ['steelLineSettings', 'plane', 'invalid'],
+    ['steelLineSettings', 'center', [0, 1]],
+    ['steelLineSettings', 'offset', 0.5],
+    ['steelLineSettings', 'snap', 'false'],
+    ['steelLineSettings', 'sectionId', 'missing'],
+  ]) {
+    const invalid = structuredClone(p);
+    invalid[group][key] = value;
+    assert.throws(() => validateProject(invalid), /設定/);
+  }
 });
 
 test('既定ブランチで接続し、保存フォルダーがない場合は空の一覧を返す', async (t) => {
@@ -95,6 +142,21 @@ test('保存リストはMAファイルだけを新しい順に表示する', asy
 test('Unicodeと画像を含む保存を読み込み、1 MB超のファイルは同じコミットのrawデータを使う', async (t) => {
   const project = createProject();
   project.name = '日本語の展覧会';
+  Object.assign(project.artworkLabels, {
+    enabled: true,
+    fontSize: 24,
+    lineHeight: 180,
+    width: 900,
+    gap: 200,
+  });
+  Object.assign(project.displaySettings, {
+    floorLines: false,
+    grid: true,
+    dimensions: false,
+    cutawayRoof: false,
+    eyeHeight: 1900,
+  });
+  Object.assign(project.steelLineSettings, { snap: false, orthogonal: true });
   const contents = JSON.stringify(project);
   const calls = [];
   let large = false;
@@ -114,6 +176,7 @@ test('Unicodeと画像を含む保存を読み込み、1 MB超のファイルは
   });
   let result = await readCloudProject(config, '', path);
   assert.equal(result.project.name, project.name);
+  assert.deepEqual(result.project, project);
   assert.equal(result.project.artworks[0].image, project.artworks[0].image);
   assert.equal(result.file.sha, 'blob-original');
   large = true;

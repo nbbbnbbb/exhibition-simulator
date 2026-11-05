@@ -12,7 +12,8 @@ import {
   pickPlanWall,
 } from '../src/artworkPlacement.js';
 import { inventoryProblem, quantityLimit } from '../src/catalog.js';
-import { normalizeLabels, artworkLabelRows } from '../src/artworkLabels.js';
+import { DEFAULT_LABELS, normalizeLabels, artworkLabelRows } from '../src/artworkLabels.js';
+import { makeArtworkLabel } from '../src/artworkLabels3D.js';
 const candidate = (s = 16000, bottom = 1000, wallId = 'west') => ({
   id: crypto.randomUUID(),
   s,
@@ -295,13 +296,137 @@ test('作品情報の選択項目だけを表示し、空欄を除き、JSONに�
     ['artist', 'dimensions', 'quantity'],
   );
   assert.equal(rows.at(-1).value, '1');
-  assert.deepEqual(validateProject(JSON.parse(JSON.stringify(p))).artworkLabels, p.artworkLabels);
+  assert.deepEqual(validateProject(JSON.parse(JSON.stringify(p))).artworkLabels, {
+    ...DEFAULT_LABELS,
+    ...p.artworkLabels,
+  });
   assert.deepEqual(normalizeLabels({ enabled: true, fields: ['title', 'invalid', 'title'] }), {
+    ...DEFAULT_LABELS,
     enabled: true,
     fields: ['title'],
   });
   p.artworkLabels.fields.push('invalid');
   assert.throws(() => validateProject(p), /表示設定/);
+});
+
+test('作品上部の文字サイズ・行間・横幅・余白を保存し、旧設定に初期値を補う', () => {
+  const p = createProject();
+  p.artworkLabels = {
+    ...DEFAULT_LABELS,
+    enabled: true,
+    fields: ['title', 'artist'],
+    fontSize: 28,
+    lineHeight: 180,
+    width: 1000,
+    gap: 200,
+  };
+  assert.deepEqual(validateProject(JSON.parse(JSON.stringify(p))).artworkLabels, p.artworkLabels);
+  for (const [key, value] of [
+    ['fontSize', 0],
+    ['fontSize', 49],
+    ['fontSize', '20'],
+    ['lineHeight', 119],
+    ['width', 2001],
+    ['gap', -1],
+  ]) {
+    const invalid = structuredClone(p);
+    invalid.artworkLabels[key] = value;
+    assert.throws(() => validateProject(invalid), /表示設定/);
+  }
+  delete p.artworkLabels;
+  assert.deepEqual(validateProject(p).artworkLabels, DEFAULT_LABELS);
+});
+
+test('ラベルは壁端・天井際・可動壁の表裏でも作品の真上に置き、文字を拡大しても下端の余白を保つ', (t) => {
+  const context = {
+    font: '',
+    measureText(text) {
+      return { width: [...text].length * (parseFloat(this.font.replace('600 ', '')) || 35) };
+    },
+    fillRect() {},
+    strokeRect() {},
+    fillText() {},
+    scale() {},
+  };
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  Object.defineProperty(globalThis, 'document', {
+    configurable: true,
+    value: { createElement: () => ({ getContext: () => context }) },
+  });
+  t.after(() => {
+    if (descriptor) Object.defineProperty(globalThis, 'document', descriptor);
+    else delete globalThis.document;
+  });
+  const project = createProject(),
+    art = project.artworks[0];
+  const wall = walls(project.building).find((w) => w.id === 'west');
+  const first = makeArtworkLabel(art, { s: 0, bottom: wall.height - art.height }, wall, {
+    ...DEFAULT_LABELS,
+    fields: ['title', 'artist'],
+  });
+  const larger = makeArtworkLabel(art, { s: 0, bottom: wall.height - art.height }, wall, {
+    ...DEFAULT_LABELS,
+    fields: ['title', 'artist'],
+    fontSize: 32,
+    gap: 200,
+  });
+  assert.equal(first.position.x, 0);
+  assert.ok(
+    Math.abs(first.position.y - first.geometry.parameters.height / 2 - art.height / 2000 - 0.09) <
+      1e-9,
+  );
+  assert.ok(larger.geometry.parameters.height > first.geometry.parameters.height);
+  assert.ok(
+    Math.abs(larger.position.y - larger.geometry.parameters.height / 2 - art.height / 2000 - 0.2) <
+      1e-9,
+  );
+  for (const normal of [
+    { x: 0, z: 1 },
+    { x: 0, z: -1 },
+  ]) {
+    const card = makeArtworkLabel(
+      art,
+      { s: wall.length, bottom: 0 },
+      { ...wall, normal },
+      { ...DEFAULT_LABELS, width: 1000 },
+    );
+    assert.equal(card.position.x, 0);
+    assert.equal(card.geometry.parameters.width, 1);
+    assert.ok(card.position.y > art.height / 2000);
+    card.geometry.dispose();
+    card.material.map.dispose();
+    card.material.dispose();
+  }
+  const overlay = makeArtworkLabel(art, { s: 0, bottom: 1000 }, wall, {
+    ...DEFAULT_LABELS,
+    position: 'overlay',
+    fontSize: 24,
+    gap: 1000,
+  });
+  assert.equal(overlay.position.x, 0);
+  assert.equal(overlay.position.y, 0);
+  assert.ok(overlay.position.z > art.depth / 2000);
+  assert.equal(overlay.material.transparent, true);
+  assert.ok(overlay.material.opacity < 1);
+  overlay.geometry.dispose();
+  overlay.material.map.dispose();
+  overlay.material.dispose();
+  for (const card of [first, larger]) {
+    card.geometry.dispose();
+    card.material.map.dispose();
+    card.material.dispose();
+  }
+});
+
+test('作品に重ねる表示位置もJSONに保存し、旧ラベルは作品の上を初期値にする', () => {
+  const p = createProject();
+  p.artworkLabels.position = 'overlay';
+  assert.equal(validateProject(JSON.parse(JSON.stringify(p))).artworkLabels.position, 'overlay');
+  delete p.artworkLabels.position;
+  assert.equal(validateProject(p).artworkLabels.position, 'above');
+  p.artworkLabels.position = 'invalid';
+  assert.throws(() => validateProject(p), /表示設定/);
+  assert.equal(normalizeLabels({ position: 'overlay' }).position, 'overlay');
 });
 test('数量上限1の配置済み作品を別の壁面へ移動してもID・数量・保存前の状態を保つ', () => {
   const p = createProject(),
