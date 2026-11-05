@@ -17,7 +17,7 @@ import {
   FrameShapeEditor,
   SteelSectionEditor,
 } from './SteelFrames.jsx';
-import { newSteelFrame, validateFrame, steelSections } from './steelFrames.js';
+import { newSteelFrame, validateFrame, steelSections, frameGeometry } from './steelFrames.js';
 import { SteelLineControls, SteelLineInspector } from './SteelLines.jsx';
 import { SteelLineFaceList, SteelLineFaceInspector } from './SteelLineFaces.jsx';
 import { detectSteelLineFaces, pruneSteelLineMembranes } from './steelLineFaces.js';
@@ -500,7 +500,9 @@ function App() {
     cancelPartitionPlacement();
     cancelSteelLine();
     if (target.type === 'artwork') select(target.id);
-    else selectPartition(target.id);
+    else if (target.type === 'partition') selectPartition(target.id);
+    else if (target.type === 'steel-line-face') selectSteelLineFace(target.id);
+    else selectSteelFrame(target.id);
     setContextTarget(target);
   }, []);
   const selectSteelLineFace = useCallback((id) => {
@@ -1972,13 +1974,29 @@ function App() {
             project.artworks.find((a) => a.id === placement?.artworkId);
           const partition =
             contextTarget.type === 'partition' && parts.find((p) => p.id === contextTarget.id);
-          if (!art && !partition) return null;
+          const steelFrame =
+            ['steel-frame', 'steel-membrane'].includes(contextTarget.type) &&
+            steelFrames.find((f) => f.id === contextTarget.id);
+          const steelLineFace =
+            contextTarget.type === 'steel-line-face' &&
+            layout.steelLineMembranes.some((m) => m.faceId === contextTarget.id) &&
+            steelLineFaces.find((f) => f.id === contextTarget.id);
+          const membraneFace =
+            contextTarget.type === 'steel-membrane' &&
+            steelFrame &&
+            steelFrame.membrane.faces.includes(contextTarget.faceIndex) &&
+            frameGeometry(steelFrame, project).shape.faces[contextTarget.faceIndex];
+          if (!art && !partition && !steelFrame && !steelLineFace) return null;
+          if (contextTarget.type === 'steel-membrane' && !membraneFace) return null;
           return (
             <ObjectContextMenu
               key={`${contextTarget.type}:${contextTarget.id}`}
               target={contextTarget}
               art={art}
               partition={partition}
+              steelFrame={steelFrame}
+              steelLineFace={steelLineFace}
+              membraneFace={membraneFace}
               onClose={closeContextMenu}
               onInfo={() => {
                 closeContextMenu();
@@ -1987,7 +2005,27 @@ function App() {
               onDelete={() => {
                 closeContextMenu();
                 if (partition) setModal({ type: 'delete-partition', id: partition.id });
-                else {
+                else if (steelLineFace) {
+                  changeSteelLineFace(steelLineFace.id, { enabled: false });
+                  tell('この面の膜を削除しました。輪郭のラインは残ります');
+                } else if (membraneFace) {
+                  update((d) => {
+                    const f = d.layouts
+                      .find((l) => l.id === d.activeLayoutId)
+                      .steelFrames.find((f) => f.id === steelFrame.id);
+                    f.membrane.faces = f.membrane.faces.filter(
+                      (index) => index !== contextTarget.faceIndex,
+                    );
+                  });
+                  tell('この面の膜を削除しました。鉄骨フレームは残ります');
+                } else if (steelFrame) {
+                  removeSteelFrame(steelFrame.id);
+                  tell(
+                    steelFrame.kind === 'line'
+                      ? '鉄骨ラインを削除しました'
+                      : '鉄骨フレームを削除しました',
+                  );
+                } else {
                   update((d) => {
                     const l = d.layouts.find((l) => l.id === d.activeLayoutId);
                     l.placements = l.placements.filter((p) => p.id !== contextTarget.id);
