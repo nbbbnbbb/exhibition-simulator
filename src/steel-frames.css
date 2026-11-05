@@ -52,6 +52,20 @@
   margin-top: 10px;
   color: #7c633f;
 }
+.workplane-step {
+  margin-top: 12px;
+  font-size: 11px;
+  line-height: 1.7;
+  color: #486b57;
+}
+.workplane-coordinates {
+  margin-top: 12px;
+}
+.workplane-coordinates summary {
+  color: #778d7e;
+  font-size: 10px;
+  cursor: pointer;
+}
 .steel-line-faces {
   margin: 18px 0;
   padding: 12px;

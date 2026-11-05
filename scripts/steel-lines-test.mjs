@@ -6,7 +6,14 @@ import * as THREE from 'three';
 import { createProject } from '../src/domain.js';
 import { newSteelFrame } from '../src/steelFrames.js';
 import { steelLineEndpoints } from '../src/steelLinePlacement.js';
-import { pointOnPlan, storedProject, waitProject } from './placement-test-helpers.mjs';
+import {
+  pointOnPlan,
+  storedProject,
+  waitProject,
+  beginSteelLineDrawing,
+  confirmSteelWorkplane,
+  openWorkplaneCoordinates,
+} from './placement-test-helpers.mjs';
 
 const browser = await chromium.launch({
   channel: process.env.PLAYWRIGHT_CHANNEL || 'chrome',
@@ -134,7 +141,54 @@ try {
   camera.position.set(f.x / 1000, f.height / 2000 + d * 0.25, f.z / 1000 + d);
   camera.lookAt(f.x / 1000, f.height / 2000, f.z / 1000);
   await page.waitForTimeout(700);
-  await page.getByRole('button', { name: '3Dでライン配置を開始', exact: true }).click();
+  await page.getByRole('button', { name: '作業平面を配置', exact: true }).click();
+  await page.waitForFunction(
+    () => document.querySelector('.scene-host').dataset.steelWorkplanePhase === 'plane',
+  );
+  await at([2500, 1500, 15000]);
+  await page.mouse.down();
+  await at([3000, 1500, 15000]);
+  await page.mouse.up();
+  await page.waitForFunction(
+    () => document.querySelector('.scene-host').dataset.steelWorkplaneCenter === '5000,1500,15000',
+  );
+  assert.equal(lines(await storedProject(page)).length, 0);
+  await at([2500, 1500, 15000]);
+  await page.mouse.down();
+  await at([3000, 1500, 15000]);
+  await page.keyboard.press('Escape');
+  await page.mouse.up();
+  await page.getByRole('button', { name: '作業平面を配置', exact: true }).click();
+  await page.waitForFunction(
+    () => document.querySelector('.scene-host').dataset.steelWorkplaneCenter === '5000,1500,15000',
+  );
+  let yHandle;
+  for (const delta of [200, 400, 600, 800, 1000, 1200]) {
+    await at([5000, 1500 + delta, 15000]);
+    if ((await page.locator('.scene-host').getAttribute('data-steel-workplane-axis')) === 'Y') {
+      yHandle = [5000, 1500 + delta, 15000];
+      break;
+    }
+  }
+  assert.ok(yHandle, 'Y translation handle is visible and selectable');
+  await page.mouse.down();
+  await at([yHandle[0], yHandle[1] + 500, yHandle[2]]);
+  await page.mouse.up();
+  const handlePosition = (
+    await page.locator('.scene-host').getAttribute('data-steel-workplane-center')
+  )
+    .split(',')
+    .map(Number);
+  assert.equal(handlePosition[0], 5000);
+  assert.equal(handlePosition[2], 15000);
+  assert.ok(handlePosition[1] > 1500);
+  await openWorkplaneCoordinates(page);
+  await field('作業平面の中心 Y', 1500);
+  await page.screenshot({ path: `${output}/workplane-positioning.png`, fullPage: true });
+  await confirmSteelWorkplane(page);
+  check(
+    'workplane surface drag, Y handle translation and Escape cancellation precede line drawing',
+  );
   const a = [3200, 1500, 14000],
     b = [5600, 1500, 14000],
     c = [5600, 2800, 14000],
@@ -152,13 +206,16 @@ try {
   await at(b, { click: true });
   await waitProject(page, (p) => lines(p).length === 1);
   await page.getByRole('combobox', { name: '鉄骨ラインの作業面', exact: true }).selectOption('xy');
+  await confirmSteelWorkplane(page);
+  await openWorkplaneCoordinates(page);
   assert.equal(
-    await page.getByRole('spinbutton', { name: '作業面の位置 Z', exact: true }).inputValue(),
+    await page.getByRole('spinbutton', { name: '作業平面の中心 Z', exact: true }).inputValue(),
     '14000',
   );
   await at(c, { click: true });
   await waitProject(page, (p) => lines(p).length === 2);
   await page.getByRole('combobox', { name: '鉄骨ラインの作業面', exact: true }).selectOption('yz');
+  await confirmSteelWorkplane(page);
   await at(e, { click: true });
   let p = await waitProject(page, (p) => lines(p).length === 3);
   assert.deepEqual(lines(p).map(steelLineEndpoints), [
@@ -184,7 +241,7 @@ try {
   p = await waitProject(page, (p) => lines(p)[0].x !== line.x || lines(p)[0].z !== line.z);
   assert.deepEqual(lines(p)[0].lineEnd, line.lineEnd);
   check('endpoint coordinates create an inclined member and 3D dragging preserves its vector');
-  await page.getByRole('button', { name: '3Dでライン配置を開始', exact: true }).click();
+  await beginSteelLineDrawing(page);
   const snapped = steelLineEndpoints(lines(p)[0])[0];
   await at(snapped, { dx: 3, dy: 1 });
   await page.waitForFunction(
@@ -196,18 +253,21 @@ try {
     snapped.join(','),
   );
   await page.getByRole('combobox', { name: '鉄骨ラインの作業面', exact: true }).selectOption('xy');
+  await confirmSteelWorkplane(page);
+  await openWorkplaneCoordinates(page);
   await at([4500, 2500, snapped[2]], { click: true });
   p = await waitProject(page, (p) => lines(p).length === 4);
-  await at([4000, 0, snapped[2]]);
+  const invalidEnd = steelLineEndpoints(lines(p).at(-1))[1];
+  await at(invalidEnd);
   await page.waitForFunction(
     () => document.querySelector('.scene-host').dataset.steelLineValid === 'false',
   );
-  await at([4000, 0, snapped[2]], { click: true });
+  await at(invalidEnd, { click: true });
   await page.keyboard.press('Escape');
   await page.waitForTimeout(500);
   assert.equal(lines(await storedProject(page)).length, 4);
   check(
-    'existing endpoints snap across work planes; invalid floor endpoints and Escape do not add members',
+    'existing endpoints snap across work planes; zero-length segments and Escape do not add members',
   );
   await page.getByRole('button', { name: '元に戻す', exact: true }).click();
   await waitProject(page, (p) => lines(p).length === 3);
@@ -215,7 +275,7 @@ try {
   await waitProject(page, (p) => lines(p).length === 4);
   await page.getByRole('combobox', { name: '鉄骨ラインの作業面', exact: true }).selectOption('xz');
   await page.getByRole('checkbox', { name: '鉄骨ラインを連続配置', exact: true }).uncheck();
-  await page.getByRole('button', { name: '3Dでライン配置を開始', exact: true }).click();
+  await beginSteelLineDrawing(page);
   await page.keyboard.down('Alt');
   await at([3201, 1500, 16001], { click: true });
   await at([4501, 1500, 16001], { click: true });
@@ -227,6 +287,27 @@ try {
   ]);
   await page.locator('.steel-line-banner').waitFor({ state: 'hidden' });
   check('one-step undo/redo, 1 mm Alt placement and automatic finish for a single segment');
+  await page.locator('.steel-frame-card').last().click();
+  await field('ライン始点 X', -22000);
+  await field('ライン終点 X', -20000);
+  await field('ライン始点 Y', -1500);
+  await field('ライン終点 Y', -1500);
+  await field('ライン始点 Z', -5000);
+  await field('ライン終点 Z', -5000);
+  p = await waitProject(
+    page,
+    (p) =>
+      lines(p).at(-1).x === -22000 &&
+      lines(p).at(-1).y === -1500 &&
+      lines(p).at(-1).z === -5000 &&
+      lines(p).at(-1).lineEnd[0] === 2000 &&
+      lines(p).at(-1).lineEnd[1] === 0 &&
+      lines(p).at(-1).lineEnd[2] === 0,
+  );
+  await page.getByRole('button', { name: 'ラインを拡大して確認', exact: true }).click();
+  await page.screenshot({ path: `${output}/outside-building.png`, fullPage: true });
+  check('line endpoint editing accepts the exterior, below-floor heights and negative depth');
+
   await page.getByRole('button', { name: '平面', exact: true }).click();
   await page.locator('.steel-frame-card').nth(1).click();
   const before = lines(p)[0];

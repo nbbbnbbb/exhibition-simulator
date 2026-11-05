@@ -249,9 +249,9 @@ export function SteelFrameInspector({
       <div className="inspector-section">
         <div className="section-label">位置・向き</div>
         {[
-          ['x', 'フレーム中心 X', -100000, 100000],
-          ['z', 'フレーム中心 Z', 0, 150000],
-          ['y', 'フレーム下端高さ', 0, 20000],
+          ['x', 'フレーム中心 X', Number.MIN_SAFE_INTEGER, Number.MAX_SAFE_INTEGER],
+          ['z', 'フレーム中心 Z', Number.MIN_SAFE_INTEGER, Number.MAX_SAFE_INTEGER],
+          ['y', 'フレーム下端高さ', Number.MIN_SAFE_INTEGER, Number.MAX_SAFE_INTEGER],
           ['rotation', 'フレーム回転角', -360, 360],
         ].map(([key, label, min, max]) => (
           <Field

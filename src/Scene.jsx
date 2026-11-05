@@ -1,6 +1,7 @@
 import { useEffect, useRef, useMemo, forwardRef, useImperativeHandle } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { LightingRig } from './LightingRig.js';
 import { ceilingStructure } from './architecture.js';
@@ -21,6 +22,7 @@ import {
   previewSteelLine,
   steelLineEndpoints,
   steelLineLength,
+  steelPlaneCenter,
 } from './steelLinePlacement.js';
 import {
   walls,
@@ -52,6 +54,7 @@ export const Scene = forwardRef(function Scene(
     steelLinePreview,
     onSteelLinePreview,
     onSteelLinePoint,
+    onSteelWorkplaneMove,
     showRails,
     placingPartition,
     partitionPreview,
@@ -99,6 +102,7 @@ export const Scene = forwardRef(function Scene(
     steelLinePreview,
     onSteelLinePreview,
     onSteelLinePoint,
+    onSteelWorkplaneMove,
     showRails,
     placingPartition,
     partitionPreview,
@@ -204,6 +208,18 @@ export const Scene = forwardRef(function Scene(
             Math.cos(angle) * distance,
           ),
         );
+      e.controls.update();
+      e.skipFit = true;
+    },
+    focusSteelWorkplane() {
+      const e = engine.current,
+        tool = current.current.steelLineTool;
+      if (!e || !tool) return;
+      const target = new THREE.Vector3(...steelPlaneCenter(tool).map(m));
+      const offset =
+        tool.plane === 'xy' ? [2, 4, 12] : tool.plane === 'yz' ? [12, 4, 2] : [6, 10, 8];
+      e.controls.target.copy(target);
+      e.camera.position.copy(target).add(new THREE.Vector3(...offset));
       e.controls.update();
       e.skipFit = true;
     },
@@ -370,6 +386,50 @@ export const Scene = forwardRef(function Scene(
     const partitionDraftGroup = new THREE.Group();
     partitionDraftGroup.userData.editorOnly = true;
     steelDraftGroup.userData.editorOnly = true;
+    const workPlaneGroup = new THREE.Group();
+    workPlaneGroup.userData.editorOnly = true;
+    workPlaneGroup.visible = false;
+    const workPlaneSurface = new THREE.Mesh(
+      new THREE.PlaneGeometry(10, 10),
+      new THREE.MeshBasicMaterial({
+        color: '#8db8a4',
+        transparent: true,
+        opacity: 0.16,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        depthTest: false,
+      }),
+    );
+    workPlaneSurface.renderOrder = 3;
+    workPlaneSurface.name = '仮想の作業平面';
+    workPlaneGroup.add(workPlaneSurface);
+    const workPlaneOutline = new THREE.LineSegments(
+      new THREE.EdgesGeometry(workPlaneSurface.geometry),
+      new THREE.LineBasicMaterial({
+        color: '#4d876c',
+        transparent: true,
+        opacity: 0.9,
+        depthTest: false,
+      }),
+    );
+    workPlaneOutline.renderOrder = 4;
+    workPlaneGroup.add(workPlaneOutline);
+    const workPlaneGrid = new THREE.GridHelper(10, 10, '#638f78', '#9fb9a7');
+    workPlaneGrid.material.transparent = true;
+    workPlaneGrid.material.opacity = 0.45;
+    workPlaneGrid.renderOrder = 4;
+    workPlaneGroup.add(workPlaneGrid);
+    scene.add(workPlaneGroup);
+    const planeControls = new TransformControls(camera, renderer.domElement);
+    planeControls.setMode('translate');
+    planeControls.setSpace('world');
+    planeControls.setSize(0.8);
+    planeControls.setTranslationSnap(0.01);
+    planeControls.enabled = false;
+    const planeHandles = planeControls.getHelper();
+    planeHandles.userData.editorOnly = true;
+    scene.add(planeHandles);
+    planeControls.detach();
     previewGroup.userData.editorOnly = true;
     previewGroup.visible = false;
     scene.add(
@@ -419,6 +479,11 @@ export const Scene = forwardRef(function Scene(
       previewGroup,
       steelDraftGroup,
       partitionDraftGroup,
+      workPlaneGroup,
+      workPlaneSurface,
+      workPlaneGrid,
+      workPlaneOutline,
+      planeControls,
       gridHelper,
       textures,
       loader,
@@ -437,6 +502,41 @@ export const Scene = forwardRef(function Scene(
         rig.rotation.set(0, 0, 0);
         camera.position.set(m(b.mainWidth) + 22, 29, m(b.length) + 13);
         controls.target.set(m(b.mainWidth - b.overallWidth) / 4, 0, m(b.length) / 2);
+        const layout = current.current.project.layouts.find(
+          (l) => l.id === current.current.project.activeLayoutId,
+        );
+        const steelNodes = layout.steelFrames.flatMap(
+          (f) => frameGeometry(f, current.current.project).nodes,
+        );
+        if (
+          steelNodes.some(
+            ([x, y, z]) =>
+              x < b.mainWidth - b.overallWidth ||
+              x > b.mainWidth ||
+              y < 0 ||
+              y > b.height ||
+              z < 0 ||
+              z > b.length,
+          )
+        ) {
+          const bounds = new THREE.Box3().setFromPoints([
+            ...polygon(b).flatMap(([x, z]) => [
+              new THREE.Vector3(m(x), 0, m(z)),
+              new THREE.Vector3(m(x), m(b.height), m(z)),
+            ]),
+            ...steelNodes.map((p) => new THREE.Vector3(...p.map(m))),
+          ]);
+          const target = bounds.getCenter(new THREE.Vector3()),
+            size = bounds.getSize(new THREE.Vector3()),
+            distance = Math.max(size.x, size.y, size.z) * 1.15;
+          controls.maxDistance = Math.max(100, distance * 3);
+          camera.far = Math.max(250, distance * 5);
+          camera.updateProjectionMatrix();
+          controls.target.copy(target);
+          camera.position
+            .copy(target)
+            .add(new THREE.Vector3(0.8, 0.9, 1).normalize().multiplyScalar(distance));
+        }
         controls.update();
       },
       startWalk(side) {
@@ -453,6 +553,16 @@ export const Scene = forwardRef(function Scene(
       },
     };
     engine.current = e;
+    const publishWorkplane = () => {
+      const position = workPlaneGroup.position.toArray().map((v) => Math.round(v * 1000));
+      host.current.dataset.steelWorkplaneCenter = position.join(',');
+      current.current.onSteelWorkplaneMove?.(position);
+    };
+    planeControls.addEventListener('dragging-changed', (event) => {
+      controls.enabled = !event.value && !drag;
+      host.current.dataset.steelWorkplaneDragging = String(event.value);
+    });
+    planeControls.addEventListener('objectChange', publishWorkplane);
     e.fit();
     const resize = new ResizeObserver(() => {
       const r = host.current?.getBoundingClientRect();
@@ -572,7 +682,7 @@ export const Scene = forwardRef(function Scene(
     function steelLinePointer(ev) {
       const c = current.current,
         tool = c.steelLineTool;
-      if (!tool) return null;
+      if (!tool || tool.phase !== 'draw') return null;
       cast(ev);
       e.lastSteelPointer = { clientX: ev.clientX, clientY: ev.clientY, altKey: ev.altKey };
       let point = pointOnSteelPlane(
@@ -605,7 +715,8 @@ export const Scene = forwardRef(function Scene(
       return preview;
     }
     e.refreshSteelPreview = () => {
-      if (e.lastSteelPointer && current.current.steelLineTool) steelLinePointer(e.lastSteelPointer);
+      if (e.lastSteelPointer && current.current.steelLineTool?.phase === 'draw')
+        steelLinePointer(e.lastSteelPointer);
     };
     const cameraChange = () => {
       if (e.lastPartitionPointer && current.current.placingPartition)
@@ -666,6 +777,26 @@ export const Scene = forwardRef(function Scene(
         const preview = partitionPointer(ev);
         if (preview?.valid) c.onPlacePartition?.(preview.partition);
         else if (preview?.message) c.onNotice(preview.message);
+        return;
+      }
+      if (c.steelLineTool?.phase === 'plane') {
+        renderer.domElement.focus();
+        planeControls.setTranslationSnap(ev.altKey ? 0.001 : 0.01);
+        if (planeControls.axis !== null) return;
+        cast(ev);
+        const hit = ray.intersectObject(workPlaneSurface)[0];
+        if (!hit) return;
+        const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(
+            camera.getWorldDirection(new THREE.Vector3()),
+            hit.point,
+          ),
+          start = hit.point.clone();
+        drag = { type: 'workplane', plane, start, origin: workPlaneGroup.position.clone() };
+        controls.enabled = false;
+        host.current.dataset.steelWorkplaneDragging = 'true';
+        renderer.domElement.setPointerCapture(ev.pointerId);
+        ev.stopImmediatePropagation();
+        ev.preventDefault();
         return;
       }
       if (c.steelLineTool) {
@@ -811,6 +942,23 @@ export const Scene = forwardRef(function Scene(
         partitionPointer(ev);
         return;
       }
+      if (drag?.type === 'workplane') {
+        cast(ev);
+        const point = new THREE.Vector3();
+        if (!ray.ray.intersectPlane(drag.plane, point)) return;
+        const step = ev.altKey ? 1 : 10,
+          position = drag.origin.clone().add(point.sub(drag.start));
+        workPlaneGroup.position.set(
+          ...position.toArray().map((v) => (Math.round((v * 1000) / step) * step) / 1000),
+        );
+        publishWorkplane();
+        return;
+      }
+      if (current.current.steelLineTool?.phase === 'plane') {
+        planeControls.setTranslationSnap(ev.altKey ? 0.001 : 0.01);
+        host.current.dataset.steelWorkplaneAxis = planeControls.axis || '';
+        return;
+      }
       if (current.current.steelLineTool) {
         steelLinePointer(ev);
         return;
@@ -898,6 +1046,12 @@ export const Scene = forwardRef(function Scene(
         if (d.type === 'artwork' && d.started && ev?.type === 'pointerup') pointerPreview(ev);
         drag = null;
         controls.enabled = true;
+        if (d.type === 'workplane') {
+          if (ev?.type !== 'pointerup') workPlaneGroup.position.copy(d.origin);
+          publishWorkplane();
+          host.current.dataset.steelWorkplaneDragging = 'false';
+          return;
+        }
         if (d.type === 'artwork') {
           if (d.started && ev?.type === 'pointerup') {
             const p = d.preview?.placement;
@@ -924,7 +1078,12 @@ export const Scene = forwardRef(function Scene(
       if (drag?.type === 'artwork') up();
     };
     e.cancelObjectDrag = () => {
-      if (drag?.type === 'artwork' || drag?.type === 'steel') up();
+      if (drag?.type === 'artwork' || drag?.type === 'steel' || drag?.type === 'workplane') up();
+      if (planeControls.dragging) {
+        planeControls.reset();
+        planeControls.pointerUp(null);
+        controls.enabled = true;
+      }
     };
     function leave() {
       e.lastPartitionPointer = null;
@@ -1159,7 +1318,7 @@ export const Scene = forwardRef(function Scene(
         } else {
           if (walkMode && !e.skipFit) e.fit();
           e.skipFit = false;
-          controls.enabled = !drag;
+          controls.enabled = !drag && !planeControls.dragging;
           controls.update();
         }
         walkMode = c.mode === 'walk';
@@ -1187,6 +1346,8 @@ export const Scene = forwardRef(function Scene(
       window.removeEventListener('keyup', keyup);
       window.removeEventListener('blur', blur);
       controls.dispose();
+      scene.remove(planeHandles);
+      planeControls.dispose();
       e.lightingRig.dispose();
       scene.traverse((o) => {
         o.geometry?.dispose();
@@ -1606,10 +1767,49 @@ export const Scene = forwardRef(function Scene(
     const e = engine.current;
     if (!e) return;
     e.refreshSteelPreview?.();
-    e.renderer.domElement.style.cursor = steelLineTool || placingPartition ? 'crosshair' : '';
+    const placingPlane = steelLineTool?.phase === 'plane';
+    e.renderer.domElement.style.cursor = placingPartition
+      ? 'crosshair'
+      : steelLineTool
+        ? placingPlane
+          ? 'move'
+          : 'crosshair'
+        : '';
     e.controls.mouseButtons.RIGHT = steelLineTool ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
-    if (!steelLineTool) e.lastSteelPointer = null;
+    if (steelLineTool?.phase !== 'draw') e.lastSteelPointer = null;
     if (!placingPartition) e.lastPartitionPointer = null;
+    e.workPlaneGroup.visible = !!steelLineTool;
+    if (steelLineTool) {
+      if (!e.planeControls.dragging && host.current.dataset.steelWorkplaneDragging !== 'true')
+        e.workPlaneGroup.position.set(...steelPlaneCenter(steelLineTool).map(m));
+      const rotation =
+        steelLineTool.plane === 'xz'
+          ? [-Math.PI / 2, 0, 0]
+          : steelLineTool.plane === 'yz'
+            ? [0, Math.PI / 2, 0]
+            : [0, 0, 0];
+      e.workPlaneSurface.rotation.set(...rotation);
+      e.workPlaneOutline.rotation.set(...rotation);
+      e.workPlaneGrid.rotation.set(
+        steelLineTool.plane === 'xy' ? Math.PI / 2 : 0,
+        0,
+        steelLineTool.plane === 'yz' ? Math.PI / 2 : 0,
+      );
+      e.workPlaneSurface.visible = placingPlane;
+      e.workPlaneOutline.material.opacity = placingPlane ? 0.9 : 0.35;
+      e.workPlaneGroup.updateMatrixWorld(true);
+    }
+    e.planeControls.enabled = placingPlane;
+    if (placingPlane) {
+      if (e.planeControls.object !== e.workPlaneGroup) e.planeControls.attach(e.workPlaneGroup);
+    } else {
+      e.planeControls.detach();
+      e.planeControls.dragging = false;
+    }
+    host.current.dataset.steelWorkplanePhase = steelLineTool?.phase || 'idle';
+    host.current.dataset.steelWorkplaneCenter = steelLineTool
+      ? steelPlaneCenter(steelLineTool).join(',')
+      : '';
   }, [steelLineTool, placingPartition, geometryKey]);
   useEffect(() => {
     const e = engine.current;
@@ -1665,24 +1865,12 @@ export const Scene = forwardRef(function Scene(
       group.remove(child);
     }
     const preview = steelLinePreview;
-    host.current.dataset.steelLineDrawing = String(!!steelLineTool);
+    host.current.dataset.steelLineDrawing = String(steelLineTool?.phase === 'draw');
     host.current.dataset.steelLineValid = String(preview?.valid === true);
     host.current.dataset.steelLinePoint = preview?.point?.join(',') || '';
     host.current.dataset.steelLineStart = steelLineTool?.start?.join(',') || '';
     host.current.dataset.steelLineSnapped = String(preview?.snapped === true);
-    if (!steelLineTool) return;
-    const planeAxis = { xz: 1, xy: 2, yz: 0 }[steelLineTool.plane];
-    const center = steelLineTool.start
-      ? [...steelLineTool.start]
-      : [project.building.mainWidth / 2, project.building.height / 2, 15000];
-    center[planeAxis] = steelLineTool.offset;
-    const guide = new THREE.GridHelper(10, 10, '#7da590', '#b8ccbe');
-    guide.position.set(...center.map(m));
-    if (steelLineTool.plane === 'xy') guide.rotation.x = Math.PI / 2;
-    if (steelLineTool.plane === 'yz') guide.rotation.z = Math.PI / 2;
-    guide.material.transparent = true;
-    guide.material.opacity = 0.3;
-    group.add(guide);
+    if (!steelLineTool || steelLineTool.phase !== 'draw') return;
     const color = preview?.valid === false ? '#ce513b' : '#4d9c68';
     const marker = (point, c) => {
       const mesh = new THREE.Mesh(

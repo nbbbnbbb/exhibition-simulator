@@ -10,6 +10,20 @@ export async function pointOnPlan(page, x, z, click = false, button = 'left') {
   await page.mouse.move(point.x, point.y);
   if (click) await page.mouse.click(point.x, point.y, { button });
 }
+export async function confirmSteelWorkplane(page) {
+  await page.getByRole('button', { name: 'この平面でラインを描く', exact: true }).click();
+  await page.waitForFunction(
+    () => document.querySelector('.scene-host').dataset.steelWorkplanePhase === 'draw',
+  );
+}
+export async function beginSteelLineDrawing(page) {
+  await page.getByRole('button', { name: '作業平面を配置', exact: true }).click();
+  await confirmSteelWorkplane(page);
+}
+export async function openWorkplaneCoordinates(page) {
+  if (!(await page.locator('.workplane-coordinates').evaluate((details) => details.open)))
+    await page.locator('.workplane-coordinates summary').click();
+}
 export async function placeOnPlan(page, title, x, z) {
   const previousView = (await page.locator('.view-modes button.active').innerText()).trim();
   await page.getByRole('button', { name: '平面', exact: true }).click();
