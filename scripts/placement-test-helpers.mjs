@@ -1,5 +1,5 @@
 // UI-only placement helpers: SVG coordinates are transformed to real pointer coordinates.
-export async function pointOnPlan(page, x, z, click = false) {
+export async function pointOnPlan(page, x, z, click = false, button = 'left') {
   const point = await page.locator('.plan-panel svg.plan-svg').evaluate(
     (svg, [x, y]) => {
       const p = new DOMPoint(x, y).matrixTransform(svg.getScreenCTM());
@@ -8,7 +8,7 @@ export async function pointOnPlan(page, x, z, click = false) {
     [x, z],
   );
   await page.mouse.move(point.x, point.y);
-  if (click) await page.mouse.click(point.x, point.y);
+  if (click) await page.mouse.click(point.x, point.y, { button });
 }
 export async function placeOnPlan(page, title, x, z) {
   const previousView = (await page.locator('.view-modes button.active').innerText()).trim();

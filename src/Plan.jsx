@@ -1,6 +1,11 @@
 import { useRef, useEffect } from 'react';
 import { walls, polygon, format, fitPartition, partitionGeometry } from './domain.js';
-import { previewPlacement, previewMove, pickPlanWall } from './artworkPlacement.js';
+import {
+  previewArtworkAddition,
+  artworkBatchDimensions,
+  previewMove,
+  pickPlanWall,
+} from './artworkPlacement.js';
 import { artworkLabelRows } from './artworkLabels.js';
 import { frameGeometry, validateFrame } from './steelFrames.js';
 import { detectSteelLineFaces } from './steelLineFaces.js';
@@ -10,6 +15,7 @@ export default function Plan({
   selected,
   compare,
   onSelect,
+  onObjectContextMenu,
   onMoveGroup,
   camera,
   showDimensions = true,
@@ -28,6 +34,7 @@ export default function Plan({
   onPartitionPreview,
   onPlacePartition,
   placingArtworkId,
+  placingArtworkBatch,
   movingPlacementId,
   movingPlacementIds = [],
   onMoveStart,
@@ -106,12 +113,20 @@ export default function Plan({
               },
               d.ids,
             )
-          : previewPlacement(project, art.id, {
-              id: 'preview',
-              wallId: nearest.wall.id,
-              s: Math.round(nearest.s),
-              bottom: Math.max(0, Math.round(1500 - art.height / 2)),
-            })
+          : previewArtworkAddition(
+              project,
+              art.id,
+              {
+                id: 'preview',
+                wallId: nearest.wall.id,
+                s: Math.round(nearest.s),
+                bottom: Math.max(
+                  0,
+                  Math.round(1500 - artworkBatchDimensions(art, placingArtworkBatch).height / 2),
+                ),
+              },
+              placingArtworkBatch,
+            )
         : {
             placement: null,
             valid: false,
@@ -160,6 +175,7 @@ export default function Plan({
     e.currentTarget.setPointerCapture(e.pointerId);
   };
   const downPart = (e, p) => {
+    if (e.button !== 0) return;
     e.stopPropagation();
     onSelectPartition(p.id);
     if (mini) return;
@@ -282,6 +298,15 @@ export default function Plan({
         className={ghost ? 'ghost-art' : 'plan-art'}
         opacity={!ghost && movingPlacementIds.includes(p.id) ? 0.15 : undefined}
         onPointerDown={ghost ? undefined : (e) => down(e, p)}
+        onContextMenu={
+          ghost
+            ? undefined
+            : (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onObjectContextMenu?.({ type: 'artwork', id: p.id, x: e.clientX, y: e.clientY });
+              }
+        }
         onPointerMove={move}
         onPointerUp={up}
         onPointerCancel={up}
@@ -363,6 +388,15 @@ export default function Plan({
         data-partition-id={ghost || preview ? undefined : p.id}
         pointerEvents={preview ? 'none' : undefined}
         onPointerDown={ghost || preview ? undefined : (e) => downPart(e, p)}
+        onContextMenu={
+          ghost || preview
+            ? undefined
+            : (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onObjectContextMenu?.({ type: 'partition', id: p.id, x: e.clientX, y: e.clientY });
+              }
+        }
         onPointerMove={move}
         onPointerUp={up}
         onPointerCancel={up}
@@ -520,7 +554,7 @@ export default function Plan({
         e.stopPropagation();
         e.preventDefault();
         const result = pointerPreview(e);
-        if (result?.valid) onPlace?.(result.placement);
+        if (result?.valid) onPlace?.(result.anchor || result.placement);
       }}
       onPointerLeave={() => {
         if (placingPartition && !mini) onPartitionPreview?.(null);
@@ -528,6 +562,10 @@ export default function Plan({
       }}
       onPointerDown={(e) => {
         if (e.target === svg.current) onSelect(null);
+      }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onObjectContextMenu?.(null);
       }}
     >
       <defs>

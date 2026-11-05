@@ -40,6 +40,91 @@ export function newPlacement(project, artworkId, candidate) {
   if (!result.valid) throw new Error(result.message);
   return result.placement;
 }
+export function artworkBatchDimensions(art, options) {
+  const count = options?.count ?? 1,
+    columns = options?.columns ?? 1,
+    gapX = options?.gapX ?? 0,
+    gapY = options?.gapY ?? 0;
+  if (!Number.isInteger(count) || count < 1 || count > 10000)
+    throw new Error('追加する点数は1〜10,000の整数で指定してください');
+  if (!Number.isInteger(columns) || columns < 1 || columns > count)
+    throw new Error('列数は1から追加する点数までの整数で指定してください');
+  if (![gapX, gapY].every((v) => Number.isInteger(v) && v >= 0 && v <= 100000))
+    throw new Error('間隔は0〜100,000 mmの整数で指定してください');
+  const rows = Math.ceil(count / columns);
+  return {
+    count,
+    columns,
+    rows,
+    gapX,
+    gapY,
+    width: art.width * columns + gapX * (columns - 1),
+    height: art.height * rows + gapY * (rows - 1),
+  };
+}
+export function previewArtworkAddition(project, artworkId, candidate, options) {
+  if (!options) return previewPlacement(project, artworkId, candidate);
+  let placements = [];
+  try {
+    const art = project.artworks.find((a) => a.id === artworkId);
+    if (!art) throw new Error('作品が見つかりません');
+    const problem = placementProblem(art);
+    if (problem) throw new Error(problem);
+    const layout = active(project),
+      size = artworkBatchDimensions(art, options),
+      limit = quantityLimit(art);
+    if (limit === null || placedCount(art, layout.placements) + size.count > limit)
+      throw new Error('追加する点数が残りの数量を超えています');
+    const wall = walls(project.building, layout.partitions, project.rails).find(
+      (w) => w.id === candidate.wallId && w.hangable,
+    );
+    if (!wall) throw new Error('展示可能な壁面を選んでください');
+    if (!Number.isFinite(candidate.s) || !Number.isFinite(candidate.bottom))
+      throw new Error('追加先の座標が不正です');
+    const direction = Math.sign(wall.tangent.x * wall.normal.z - wall.tangent.z * wall.normal.x);
+    const span = (size.columns - 1) * (art.width + size.gapX),
+      minS = Math.ceil(art.width / 2),
+      maxS = Math.floor(wall.length - art.width / 2 - span);
+    const fits = minS <= maxS && size.height <= wall.height;
+    const startS = fits
+      ? clamp(Math.round(candidate.s - span / 2), minS, maxS)
+      : Math.round(candidate.s - span / 2);
+    const bottom = fits
+      ? clamp(mm(candidate.bottom), 0, wall.height - size.height)
+      : mm(candidate.bottom);
+    placements = Array.from({ length: size.count }, (_, index) => ({
+      id: `preview-${index}`,
+      artworkId,
+      wallId: wall.id,
+      s:
+        startS +
+        (direction < 0 ? size.columns - 1 - (index % size.columns) : index % size.columns) *
+          (art.width + size.gapX),
+      bottom:
+        bottom + (size.rows - 1 - Math.floor(index / size.columns)) * (art.height + size.gapY),
+    }));
+    const message = !fits
+      ? '行列全体が壁面に収まりません。点数・列数・間隔を変更してください'
+      : placements.map((p) => overlapProblem(project, p)).find(Boolean) || '';
+    return {
+      placement: placements[0],
+      placements,
+      anchor: { wallId: wall.id, s: startS + span / 2, bottom },
+      valid: !message,
+      message,
+    };
+  } catch (error) {
+    return { placement: null, placements, valid: false, message: error.message };
+  }
+}
+export function newArtworkBatch(project, artworkId, candidate, options, ids) {
+  const result = previewArtworkAddition(project, artworkId, candidate, options);
+  if (!result.valid) throw new Error(result.message);
+  const placements = result.placements || [result.placement];
+  if (ids.length !== placements.length || new Set(ids).size !== ids.length)
+    throw new Error('追加する作品の配置IDが不正です');
+  return placements.map((p, index) => ({ ...p, id: ids[index] }));
+}
 export function previewMove(project, placementId, candidate, placementIds = [placementId]) {
   const layout = active(project),
     original = layout.placements.find((p) => p.id === placementId);

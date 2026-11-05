@@ -4,7 +4,12 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { LightingRig } from './LightingRig.js';
 import { ceilingStructure } from './architecture.js';
-import { pickWall, previewPlacement, previewMove } from './artworkPlacement.js';
+import {
+  pickWall,
+  previewArtworkAddition,
+  artworkBatchDimensions,
+  previewMove,
+} from './artworkPlacement.js';
 import { makeArtworkLabel } from './artworkLabels3D.js';
 import { pickPartitionRail, previewPartition } from './partitionPlacement.js';
 import { makeSteelFrame } from './SteelFrames3D.js';
@@ -55,10 +60,12 @@ export const Scene = forwardRef(function Scene(
     onSelectPartition,
     onPartitionMove,
     onSelect,
+    onObjectContextMenu,
     onMoveGroup,
     onNotice,
     onCamera,
     placingArtworkId,
+    placingArtworkBatch,
     movingPlacementId,
     movingPlacementIds,
     onMoveStart,
@@ -100,10 +107,12 @@ export const Scene = forwardRef(function Scene(
     onSelectPartition,
     onPartitionMove,
     onSelect,
+    onObjectContextMenu,
     onMoveGroup,
     onNotice,
     onCamera,
     placingArtworkId,
+    placingArtworkBatch,
     movingPlacementId,
     movingPlacementIds,
     onMoveStart,
@@ -502,12 +511,22 @@ export const Scene = forwardRef(function Scene(
                 },
                 drag.ids,
               )
-            : previewPlacement(c.project, art.id, {
-                id: 'preview',
-                wallId: target.wall.id,
-                s: Math.round(target.s / snap) * snap,
-                bottom: Math.round((target.point.y - art.height / 2) / snap) * snap,
-              })
+            : previewArtworkAddition(
+                c.project,
+                art.id,
+                {
+                  id: 'preview',
+                  wallId: target.wall.id,
+                  s: Math.round(target.s / snap) * snap,
+                  bottom:
+                    Math.round(
+                      (target.point.y -
+                        artworkBatchDimensions(art, c.placingArtworkBatch).height / 2) /
+                        snap,
+                    ) * snap,
+                },
+                c.placingArtworkBatch,
+              )
           : {
               placement: null,
               valid: false,
@@ -596,7 +615,48 @@ export const Scene = forwardRef(function Scene(
         pointerPreview(e.lastPointer);
     };
     controls.addEventListener('change', cameraChange);
+    function contextObject(ev) {
+      cast(ev);
+      const hits = ray.intersectObjects(world.children, true);
+      const occluder = hits.find((h) => {
+        const mat = h.object.material;
+        return mat && mat.colorWrite !== false && (!mat.transparent || mat.opacity >= 0.95);
+      });
+      const art = ray
+        .intersectObjects(
+          artGroup.children.filter((g) => g.visible),
+          true,
+        )
+        .find(
+          (h) =>
+            h.object.userData.placementId && (!occluder || h.distance <= occluder.distance + 0.002),
+        );
+      const part = hits.find(
+        (h) =>
+          h.object.userData.partitionId && (!occluder || h.distance <= occluder.distance + 0.002),
+      );
+      if (art && (!part || art.distance <= part.distance + 0.002))
+        return {
+          type: 'artwork',
+          id: art.object.userData.placementId,
+          x: ev.clientX,
+          y: ev.clientY,
+        };
+      return part
+        ? { type: 'partition', id: part.object.userData.partitionId, x: ev.clientX, y: ev.clientY }
+        : null;
+    }
+    function contextMenu(ev) {
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      current.current.onObjectContextMenu?.(contextObject(ev));
+    }
     function down(ev) {
+      if (ev.button === 2 && contextObject(ev)) {
+        ev.stopImmediatePropagation();
+        ev.preventDefault();
+        return;
+      }
       if (ev.button !== 0) return;
       const c = current.current;
       if (c.placingPartition) {
@@ -621,7 +681,7 @@ export const Scene = forwardRef(function Scene(
         ev.stopImmediatePropagation();
         ev.preventDefault();
         const preview = pointerPreview(ev);
-        if (preview?.valid) c.onPlace?.(preview.placement);
+        if (preview?.valid) c.onPlace?.(preview.anchor || preview.placement);
         else if (preview?.message) c.onNotice(preview.message);
         return;
       }
@@ -905,6 +965,7 @@ export const Scene = forwardRef(function Scene(
       e.cancelObjectDrag();
     };
     renderer.domElement.addEventListener('pointerdown', down, true);
+    renderer.domElement.addEventListener('contextmenu', contextMenu, true);
     renderer.domElement.addEventListener('pointermove', move);
     renderer.domElement.addEventListener('pointerup', up);
     renderer.domElement.addEventListener('pointercancel', up);
@@ -1115,6 +1176,7 @@ export const Scene = forwardRef(function Scene(
       resize.disconnect();
       renderer.setAnimationLoop(null);
       renderer.domElement.removeEventListener('pointerdown', down, true);
+      renderer.domElement.removeEventListener('contextmenu', contextMenu, true);
       renderer.domElement.removeEventListener('pointermove', move);
       renderer.domElement.removeEventListener('pointerup', up);
       renderer.domElement.removeEventListener('pointercancel', up);
@@ -1660,7 +1722,10 @@ export const Scene = forwardRef(function Scene(
     g.visible = false;
     const layout = project.layouts.find((l) => l.id === project.activeLayoutId);
     const items = placingArtworkId
-      ? [{ id: 'preview', artworkId: placingArtworkId }]
+      ? Array.from({ length: placingArtworkBatch?.count || 1 }, (_, i) => ({
+          id: placingArtworkBatch ? `preview-${i}` : 'preview',
+          artworkId: placingArtworkId,
+        }))
       : layout.placements.filter((p) => movingPlacementIds.includes(p.id));
     host.current.dataset.placing = String(!!placingArtworkId);
     host.current.dataset.movingPlacement = movingPlacementId || '';
@@ -1710,7 +1775,13 @@ export const Scene = forwardRef(function Scene(
       group.add(frame, image, edge);
       g.add(group);
     }
-  }, [placingArtworkId, movingPlacementId, movingPlacementIds, project.artworks]);
+  }, [
+    placingArtworkId,
+    placingArtworkBatch,
+    movingPlacementId,
+    movingPlacementIds,
+    project.artworks,
+  ]);
   useEffect(() => {
     const e = engine.current;
     if (!e) return;
