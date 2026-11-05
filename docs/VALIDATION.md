@@ -7,7 +7,12 @@
 - `npm run build`、書式確認、`git diff --check`：成功。
 - GitHubに保存専用の `ma-saves` ブランチを作成しました。保存データの追加・更新は `main` を変更しません。
 
-GitHub Appの登録とVercelの接続・秘密設定・公開は未実施です。実アカウントでのログイン・保存は未検証で、現在の公開版はトークン入力方式のまま維持しています。初回設置は [GitHubログインの設置](GITHUB-SIGN-IN.md) を参照してください。
+- VercelのProductionへ認証サーバーを公開し、必要な環境変数を設定しました。公開オリジンへの匿名アクセスはHTTP 200、認証開始はGitHubへのHTTP 302を確認しました。
+- GitHub Appを対象リポジトリ1件だけにインストールしました。ContentsはRead and write、MetadataはRead-only、Callback URLのワイルドカード一致は無効です。
+- 実ブラウザーでGitHub認証を完了し、認証サーバーが `nbbbnbbb` の本人確認・対象リポジトリへの書き込み権限・短期トークンの有効期限を検証して、ログイン成功を返すことを確認しました。
+- GitHub Actionsの公開URL変数 `MA_GITHUB_AUTH_URL` を設定しました。
+
+実リポジトリへの保存・上書きはまだ実行していません。保存・共有・競合の処理は上記の模擬APIで検証しています。設置情報は [GitHubログインの設置](GITHUB-SIGN-IN.md) を参照してください。
 
 ## GitHub保存・共有URL・作品一覧・表示設定（2026-11-05）
 

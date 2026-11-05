@@ -2,12 +2,26 @@
 
 アプリ本体はGitHub Pages、保存先は `nbbbnbbb/exhibition-simulator` の `ma-saves` ブランチ、認証コードの交換だけをVercelのNode.js Functionで実行します。利用者はGitHubでログインし、トークンを手入力しません。
 
+## 現在の公開設定
+
+2026-11-05に初回設定を完了しました。
+
+- 認証サーバー：`https://ma-exhibition-auth.vercel.app`
+- Vercelプロジェクト：`ma-exhibition-auth`。`auth-server` ディレクトリを公式Vercel CLIからデプロイします。Git連携による自動デプロイは設定していません。
+- GitHub App：[MA Exhibition Saves nbbbnbbb](https://github.com/apps/ma-exhibition-saves-nbbbnbbb)。インストール先は `nbbbnbbb/exhibition-simulator` の1件だけです。
+- Callback URL：`https://ma-exhibition-auth.vercel.app/api/callback`。ワイルドカード一致は無効です。
+- 必要な4つの環境変数をVercelのProductionへ設定済みです。秘密の値はソースに含めません。
+- GitHub Actionsのリポジトリ変数 `MA_GITHUB_AUTH_URL` に認証サーバーのURLを設定済みです。
+
+認証コードを変更した場合は、`auth-server` で `vercel deploy --prod` を実行して更新します。アプリ本体のGitHub Pages公開とは別のデプロイです。Vercel CLIのログイン・プロジェクトのリンクが必要です。
+
 ## 管理者による初回設定
 
-1. Vercelにこのリポジトリをインポートし、Root Directoryを `auth-server`、Framework PresetをOtherにします。実装を準備中のブランチで確認する場合は、そのブランチからデプロイしてください。Output Directoryは `public` です。サーバーの公開HTTPS URLを確認します。
+1. Vercelにプロジェクトを作り、`auth-server` ディレクトリを公式CLIでリンクしてデプロイします。Framework PresetはOther、Output Directoryは `public`、Node.jsは24.xです。Git連携を使う場合は、このリポジトリをインポートしてRoot Directoryを `auth-server` に設定する方法もあります。サーバーの公開HTTPS URLを確認します。
 2. GitHubの Settings → Developer settings → GitHub Apps → New GitHub App でアプリを登録します。
    - Homepage URL：`https://nbbbnbbb.github.io/exhibition-simulator/`
    - Callback URL：`https://<認証サーバーのドメイン>/api/callback`
+   - Callback URLのワイルドカード一致：無効
    - Webhook：無効
    - Repository permissions：ContentsはRead and write、MetadataはRead-only。他の権限は付けません。
    - 利用者の有効期限付きトークンを有効にします。サーバーは期限のないトークンを拒否します。
@@ -15,12 +29,12 @@
 3. GitHub Appを `nbbbnbbb/exhibition-simulator` **だけ**にインストールします。All repositoriesを選ぶ必要はありません。
 4. VercelのプロジェクトのEnvironment Variablesへ、次の値を登録します。値はチャットやGitへ貼らず、Vercel側に設定します。
 
-   | 名前 | 値 |
-   | --- | --- |
-   | `GITHUB_APP_CLIENT_ID` | GitHub AppのClient ID（App IDとは異なります） |
-   | `GITHUB_APP_CLIENT_SECRET` | GitHub AppのClient Secret |
-   | `OAUTH_STATE_KEY` | 暗号化用のランダム32バイトをbase64化した値 |
-   | `AUTH_ORIGIN` | 認証サーバーのHTTPSオリジン。例：`https://example.vercel.app` |
+   | 名前                       | 値                                                            |
+   | -------------------------- | ------------------------------------------------------------- |
+   | `GITHUB_APP_CLIENT_ID`     | GitHub AppのClient ID（App IDとは異なります）                 |
+   | `GITHUB_APP_CLIENT_SECRET` | GitHub AppのClient Secret                                     |
+   | `OAUTH_STATE_KEY`          | 暗号化用のランダム32バイトをbase64化した値                    |
+   | `AUTH_ORIGIN`              | 認証サーバーのHTTPSオリジン。例：`https://example.vercel.app` |
 
    `OAUTH_STATE_KEY` は、管理者の手元で `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"` を一度実行して生成します。`.env.example` はキー名だけを示す見本です。秘密を入れたファイルはコミットしません。
 
@@ -43,6 +57,6 @@
 
 ## 検証
 
-`npm test` に認証の単体検証を含めます。`npm run test:cloud` は独立したテストビルドと模擬認証・GitHub APIを使い、トークン入力なしのログイン、保存、共有、権限拒否を確認します。実GitHub App・Vercelでのログインと保存は、初回設定後の実環境検証が別途必要です。
+`npm test` に認証の単体検証を含めます。`npm run test:cloud` は独立したテストビルドと模擬認証・GitHub APIを使い、トークン入力なしのログイン、保存、共有、権限拒否を確認します。実GitHub App・Vercelでの本人確認と書き込み権限確認も成功しました。保存・上書き・共有の検証範囲は [検証記録](VALIDATION.md) を参照してください。
 
 GitHub公式：[利用者トークンの生成](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app)、[最小権限の選択](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/choosing-permissions-for-a-github-app)。Vercel公式：[Node.js Functions](https://vercel.com/docs/functions/runtimes/node-js)、[環境変数](https://vercel.com/docs/environment-variables)。
