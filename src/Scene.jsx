@@ -1775,7 +1775,7 @@ export const Scene = forwardRef(function Scene(
       image.receiveShadow = true;
       g.add(image);
       if (labelSettings?.enabled) {
-        const label = makeArtworkLabel(a, p, w, layout, project.artworks, labelSettings);
+        const label = makeArtworkLabel(a, p, w, labelSettings);
         if (label) g.add(label);
       }
       if (selected.includes(p.id)) {

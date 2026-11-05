@@ -49,6 +49,11 @@
   flex-wrap: wrap;
   margin-bottom: 18px;
 }
+.label-style-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
 .label-field-list {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

@@ -3,8 +3,9 @@ import { lightingDefaults, validateLighting } from './lighting.js';
 import { createRails } from './architecture.js';
 import { validateSteelProject } from './steelFrames.js';
 import { validateSteelLineMembranes } from './steelLineFaces.js';
-import { DEFAULT_LABELS, LABEL_FIELDS } from './artworkLabels.js';
+import { DEFAULT_LABELS, validateLabels } from './artworkLabels.js';
 import { DEFAULT_DISPLAY_SETTINGS, validateDisplaySettings } from './displaySettings.js';
+import { DEFAULT_STEEL_LINE_SETTINGS, validateSteelLineSettings } from './steelLinePlacement.js';
 import {
   addSuppliedArtworks,
   placementProblem,
@@ -446,6 +447,7 @@ export function createProject() {
     artworks,
     artworkLabels: structuredClone(DEFAULT_LABELS),
     displaySettings: { ...DEFAULT_DISPLAY_SETTINGS },
+    steelLineSettings: structuredClone(DEFAULT_STEEL_LINE_SETTINGS),
     frameShapes: [],
     steelSections: [],
     layouts: [
@@ -471,15 +473,7 @@ export function validateProject(d) {
   if (!d || d.schemaVersion !== SCHEMA_VERSION || typeof d.name !== 'string' || d.name.length > 200)
     throw new Error('対応するMAプロジェクト形式ではありません（schemaVersion: 1）');
   validateDisplaySettings(d);
-  d.artworkLabels ??= structuredClone(DEFAULT_LABELS);
-  if (
-    typeof d.artworkLabels.enabled !== 'boolean' ||
-    !Array.isArray(d.artworkLabels.fields) ||
-    d.artworkLabels.fields.length > LABEL_FIELDS.length ||
-    !d.artworkLabels.fields.every((key) => LABEL_FIELDS.some(([id]) => id === key)) ||
-    new Set(d.artworkLabels.fields).size !== d.artworkLabels.fields.length
-  )
-    throw new Error('作品情報の表示設定が不正です');
+  validateLabels(d);
   const bounds = {
     mainWidth: [2000, 50000],
     overallWidth: [3000, 100000],
@@ -618,6 +612,7 @@ export function validateProject(d) {
         throw new Error('配置データが不正です');
   }
   validateSteelProject(d);
+  validateSteelLineSettings(d);
   validateSteelLineMembranes(d);
   if (!d.layouts.some((l) => l.id === d.activeLayoutId))
     throw new Error('選択中のレイアウトがありません');

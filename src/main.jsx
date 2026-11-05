@@ -21,12 +21,11 @@ import {
   FrameShapeEditor,
   SteelSectionEditor,
 } from './SteelFrames.jsx';
-import { newSteelFrame, validateFrame, steelSections, frameGeometry } from './steelFrames.js';
+import { newSteelFrame, validateFrame, frameGeometry } from './steelFrames.js';
 import { SteelLineControls, SteelLineInspector } from './SteelLines.jsx';
 import { SteelLineFaceList, SteelLineFaceInspector } from './SteelLineFaces.jsx';
 import { detectSteelLineFaces, pruneSteelLineMembranes } from './steelLineFaces.js';
 import {
-  DEFAULT_STEEL_LINE_SETTINGS,
   newSteelLine,
   steelLineEndpoints,
   steelPlaneCenter,
@@ -65,7 +64,6 @@ import {
   movedPlacements,
   assertInventoryChange,
 } from './artworkPlacement.js';
-import { DEFAULT_LABELS, LABEL_FIELDS } from './artworkLabels.js';
 import './style.css';
 import './partitions.css';
 import './lighting.css';
@@ -243,6 +241,48 @@ function App() {
     future: [],
   }));
   const project = history.present;
+  const displaySettings = project.displaySettings;
+  const {
+    floorLines: showRails,
+    view,
+    grid,
+    cutawayRoof,
+    eyeHeight: eye,
+    dimensions,
+  } = displaySettings;
+  const steelLineSettings = project.steelLineSettings;
+  function setDisplayPreferences(changes) {
+    // View controls stay saved without taking the place of an editing undo step.
+    setHistory((h) => {
+      const values = changes(h.present.displaySettings);
+      if (Object.entries(values).every(([key, value]) => value === h.present.displaySettings[key]))
+        return h;
+      const apply = (p) => ({ ...p, displaySettings: { ...p.displaySettings, ...values } });
+      return { past: h.past.map(apply), present: apply(h.present), future: h.future.map(apply) };
+    });
+  }
+  function setDisplaySetting(key, value, checkpoint = true) {
+    if (!checkpoint) {
+      setDisplayPreferences((settings) => ({
+        [key]: typeof value === 'function' ? value(settings[key]) : value,
+      }));
+      return;
+    }
+    update((d) => {
+      d.displaySettings[key] = typeof value === 'function' ? value(d.displaySettings[key]) : value;
+    });
+  }
+  const setView = (value) => setDisplaySetting('view', value, false);
+  const setGrid = (value) => setDisplaySetting('grid', value, false);
+  const setCutawayRoof = (value) => setDisplaySetting('cutawayRoof', value, false);
+  const setEye = (value) => setDisplaySetting('eyeHeight', value, false);
+  const setDimensions = (value) => setDisplaySetting('dimensions', value, false);
+  const setShowRails = (value) => setDisplaySetting('floorLines', value, false);
+  function setSteelLineSettings(value) {
+    update((d) => {
+      d.steelLineSettings = typeof value === 'function' ? value(d.steelLineSettings) : value;
+    }, false);
+  }
   const [loaded, setLoaded] = useState(false),
     [saveStatus, setSaveStatus] = useState('読込中'),
     [storageEnabled, setStorageEnabled] = useState(true);
@@ -262,14 +302,7 @@ function App() {
     return () => clearTimeout(timer);
   }, [cloudSession]);
   const [selectedPartition, setSelectedPartition] = useState(null),
-    [partitionFace, setPartitionFace] = useState('front'),
-    [showRails, setShowRails] = useState(() => {
-      try {
-        return localStorage.getItem('ma:show-floor-lines') !== 'false';
-      } catch {
-        return true;
-      }
-    });
+    [partitionFace, setPartitionFace] = useState('front');
   const [selectedSteelFrame, setSelectedSteelFrame] = useState(null);
   const [contextTarget, setContextTarget] = useState(null);
   const closeContextMenu = useCallback(() => setContextTarget(null), []);
@@ -280,38 +313,26 @@ function App() {
     setPartitionPreview(null);
   }, []);
   const [selectedSteelLineFace, setSelectedSteelLineFace] = useState(null);
-  useEffect(() => {
-    try {
-      localStorage.setItem('ma:show-floor-lines', String(showRails));
-    } catch {}
-  }, [showRails]);
   const [selected, setSelected] = useState(['p-1']),
-    [view, setView] = useState('split'),
     [mode, setMode] = useState('orbit'),
-    [grid, setGrid] = useState(false),
-    [cutawayRoof, setCutawayRoof] = useState(true),
     [inspectorTab, setInspectorTab] = useState('placement'),
-    [eye, setEye] = useState(1600),
-    [dimensions, setDimensions] = useState(true),
     [camera, setCamera] = useState(null);
   const [modal, setModal] = useState(null),
     [notice, setNotice] = useState(''),
     [compareId, setCompareId] = useState(''),
     [filter, setFilter] = useState(''),
     [libraryTab, setLibraryTab] = useState('artworks');
-  const [collapsedPanels, setCollapsedPanels] = useState(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem('ma:collapsed-panels'));
-      return { library: saved?.library === true, inspector: saved?.inspector === true };
-    } catch {
-      return { library: false, inspector: false };
-    }
-  });
-  useEffect(() => {
-    try {
-      localStorage.setItem('ma:collapsed-panels', JSON.stringify(collapsedPanels));
-    } catch {}
-  }, [collapsedPanels]);
+  const collapsedPanels = {
+    library: !displaySettings.libraryPanel,
+    inspector: !displaySettings.inspectorPanel,
+  };
+  function setCollapsedPanels(value) {
+    setDisplayPreferences((settings) => {
+      const current = { library: !settings.libraryPanel, inspector: !settings.inspectorPanel };
+      const next = typeof value === 'function' ? value(current) : value;
+      return { libraryPanel: !next.library, inspectorPanel: !next.inspector };
+    });
+  }
   const [planWindow, openPlanWindow] = usePlanWindow((message) => setNotice(message));
   useEffect(closeContextMenu, [planWindow]);
   const [placingArtworkId, setPlacingArtworkId] = useState(null),
@@ -319,8 +340,7 @@ function App() {
     [movingPlacementId, setMovingPlacementId] = useState(null),
     [movingPlacementIds, setMovingPlacementIds] = useState([]),
     [placementPreview, setPlacementPreview] = useState(null);
-  const [steelLineSettings, setSteelLineSettings] = useState(DEFAULT_STEEL_LINE_SETTINGS),
-    [drawingSteelLines, setDrawingSteelLines] = useState(false),
+  const [drawingSteelLines, setDrawingSteelLines] = useState(false),
     [steelLineStart, setSteelLineStart] = useState(null),
     [steelLinePreview, setSteelLinePreview] = useState(null);
   const [steelLinePhase, setSteelLinePhase] = useState('plane');
@@ -333,10 +353,6 @@ function App() {
     if (mode !== 'orbit') cancelPartitionPlacement();
   }, [mode]);
   useEffect(() => setPartitionPreview(null), [view]);
-  useEffect(() => {
-    if (!steelSections(project).some((section) => section.id === steelLineSettings.sectionId))
-      setSteelLineSettings((s) => ({ ...s, sectionId: 'c65' }));
-  }, [project, steelLineSettings.sectionId]);
   const cancelSteelLine = useCallback(() => {
     setDrawingSteelLines(false);
     setSteelLinePhase('plane');
@@ -387,12 +403,7 @@ function App() {
     a = project.artworks.find((a) => a.id === p?.artworkId),
     w = ws.find((w) => w.id === p?.wallId);
   const issues = layoutIssues(project);
-  const labelSettings = project.artworkLabels || DEFAULT_LABELS;
-  const displaySettings = project.displaySettings;
-  const setDisplaySetting = (key, value) =>
-    update((d) => {
-      d.displaySettings[key] = value;
-    });
+  const labelSettings = project.artworkLabels;
   const placingArt = project.artworks.find((art) => art.id === placingArtworkId);
   const movingArt = project.artworks.find(
     (art) => art.id === layout.placements.find((p) => p.id === movingPlacementId)?.artworkId,
@@ -453,9 +464,31 @@ function App() {
     let live = true;
     async function start() {
       try {
-        const d = await readProject();
+        const d = (await readProject()) || createProject();
         if (!live) return;
         if (d) {
+          // Migrate the former browser-only preference only for local legacy data.
+          if (d.displaySettings?.floorLines === undefined) {
+            let floorLines = true;
+            try {
+              floorLines = localStorage.getItem('ma:show-floor-lines') !== 'false';
+            } catch {}
+            d.displaySettings = { ...d.displaySettings, floorLines };
+          }
+          if (
+            d.displaySettings?.libraryPanel === undefined ||
+            d.displaySettings?.inspectorPanel === undefined
+          ) {
+            let panels;
+            try {
+              panels = JSON.parse(localStorage.getItem('ma:collapsed-panels'));
+            } catch {}
+            d.displaySettings = {
+              ...d.displaySettings,
+              libraryPanel: d.displaySettings?.libraryPanel ?? panels?.library !== true,
+              inspectorPanel: d.displaySettings?.inspectorPanel ?? panels?.inspector !== true,
+            };
+          }
           validateProject(addSuppliedArtworks(d));
           setHistory({ past: [], present: d, future: [] });
           setSelected([]);
@@ -553,7 +586,7 @@ function App() {
     return () => clearTimeout(timer);
   }, [notice]);
   const update = useCallback(
-    (fn) =>
+    (fn, checkpoint = true) =>
       setHistory((h) => {
         const next = structuredClone(h.present);
         try {
@@ -565,7 +598,11 @@ function App() {
           setTimeout(() => tell(err.message), 0);
           return h;
         }
-        return { past: [...h.past.slice(-39), h.present], present: next, future: [] };
+        return {
+          past: checkpoint ? [...h.past.slice(-39), h.present] : h.past,
+          present: next,
+          future: checkpoint ? [] : h.future,
+        };
       }),
     [],
   );
@@ -2309,6 +2346,7 @@ function App() {
           onClose={() => setModal(null)}
           Modal={Modal}
           Button={Button}
+          NumberField={NumberField}
         />
       )}
       {modal === 'cloud' && (

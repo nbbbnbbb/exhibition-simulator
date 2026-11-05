@@ -329,6 +329,7 @@ try {
   await page.screenshot({ path: `${output}/plan-lines.png`, fullPage: true });
   await page.getByRole('button', { name: '3D', exact: true }).click();
   await page.screenshot({ path: `${output}/3d-lines.png`, fullPage: true });
+  p = await waitProject(page, (p) => p.displaySettings.view === 'three');
   check('plan view renders and drags individual lines without changing their geometry');
   await page.getByRole('button', { name: '書き出す', exact: true }).click();
   const json = JSON.parse((await exported('.ma.json', 'lines.ma.json')).toString('utf8'));
