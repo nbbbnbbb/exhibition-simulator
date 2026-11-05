@@ -1,6 +1,11 @@
 import { validateProject } from './domain.js';
 
 export const CLOUD_FOLDER = 'ma-projects';
+export const DEFAULT_CLOUD_CONFIG = Object.freeze({
+  owner: 'nbbbnbbb',
+  repo: 'exhibition-simulator',
+  branch: 'ma-saves',
+});
 export const MAX_CLOUD_BYTES = 80 * 1024 * 1024;
 const API = 'https://api.github.com';
 
@@ -61,8 +66,8 @@ async function request(config, token, endpoint = '', options = {}) {
   }
   if (!response.ok) {
     const messages = {
-      401: 'GitHubトークンが無効、または有効期限切れです。接続設定で入力し直してください',
-      403: 'GitHubの権限またはAPI利用制限により実行できません。Contents権限と利用状況を確認してください',
+      401: 'GitHubログインの有効期限が切れました。再度ログインしてください',
+      403: 'GitHubの権限またはAPI利用制限により実行できません。アカウントの保存権限と利用状況を確認してください',
       404: '保存先が見つかりません。リポジトリ・ブランチ・ファイル名とアクセス権を確認してください',
       409: '別の端末などで保存先が更新されています。一覧から開き直すか、別名で保存してください',
       422: '保存できませんでした。ブランチの保護設定・書き込み権限・ファイルの競合を確認してください',
@@ -165,7 +170,11 @@ export async function readCloudProject(config, token, path) {
 }
 
 export async function writeCloudProject(config, token, project, name, target = null) {
-  if (!token) throw new Error('保存するにはGitHubトークンで接続してください');
+  if (!token) throw new Error('保存するにはGitHubにログインしてください');
+  if (JSON.stringify(cloudConfig(config)) !== JSON.stringify(DEFAULT_CLOUD_CONFIG))
+    throw new Error(
+      '保存先はこのアプリの保存専用ブランチに固定されています。別名で保存してください',
+    );
   if (!config.branch) throw new Error('保存先のブランチを指定してください');
   validateProject(structuredClone(project));
   const safeName = [

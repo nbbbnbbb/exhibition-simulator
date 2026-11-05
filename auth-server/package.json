@@ -1,0 +1,8 @@
+{
+  "name": "ma-github-sign-in",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "24.x"
+  }
+}
