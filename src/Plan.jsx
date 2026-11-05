@@ -48,6 +48,7 @@ export default function Plan({
   onPreview,
   onPlace,
   labelSettings,
+  viewTransform,
 }) {
   const svg = useRef();
   const drag = useRef();
@@ -70,7 +71,13 @@ export default function Plan({
     maxX = Math.max(...extentPoints.map((p) => p[0]));
   const minZ = Math.min(...extentPoints.map((p) => p[1])),
     maxZ = Math.max(...extentPoints.map((p) => p[1]));
+  const baseWidth = maxX - minX + 2 * pad,
+    baseHeight = maxZ - minZ + 2 * pad,
+    zoom = viewTransform?.zoom || 1;
+  const viewWidth = baseWidth / zoom,
+    viewHeight = baseHeight / zoom;
   useEffect(() => {
+    const ownerWindow = svg.current.ownerDocument.defaultView;
     const cancel = () => {
       if (steelDrag.current) {
         steelDrag.current.element.removeAttribute('transform');
@@ -84,11 +91,11 @@ export default function Plan({
     const key = (event) => {
       if (event.code === 'Escape') cancel();
     };
-    window.addEventListener('keydown', key);
-    window.addEventListener('blur', cancel);
+    ownerWindow.addEventListener('keydown', key);
+    ownerWindow.addEventListener('blur', cancel);
     return () => {
-      window.removeEventListener('keydown', key);
-      window.removeEventListener('blur', cancel);
+      ownerWindow.removeEventListener('keydown', key);
+      ownerWindow.removeEventListener('blur', cancel);
     };
   }, [onMoveEnd]);
   const point = (e) => {
@@ -655,7 +662,7 @@ export default function Plan({
       data-camera-z={camera?.z}
       ref={svg}
       className={mini ? 'plan-svg mini' : 'plan-svg'}
-      viewBox={`${minX - pad} ${minZ - pad} ${maxX - minX + 2 * pad} ${maxZ - minZ + 2 * pad}`}
+      viewBox={`${minX - pad + (baseWidth - viewWidth) / 2 + (viewTransform?.x || 0)} ${minZ - pad + (baseHeight - viewHeight) / 2 + (viewTransform?.y || 0)} ${viewWidth} ${viewHeight}`}
       role="img"
       aria-label={mini ? '現在地ミニマップ' : '寸法付き展示平面図'}
       onPointerMoveCapture={(e) => {

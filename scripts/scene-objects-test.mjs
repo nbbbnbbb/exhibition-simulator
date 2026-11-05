@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { createServer } from 'node:http';
 import { chromium } from 'playwright';
 import * as THREE from 'three';
 import { storedProject, waitProject } from './placement-test-helpers.mjs';
@@ -17,6 +18,7 @@ const root = path.resolve('dist'),
   errors = [];
 await fs.mkdir(output, { recursive: true });
 page.on('pageerror', (e) => errors.push(e.message));
+page.context().on('page', (popup) => popup.on('pageerror', (e) => errors.push(e.message)));
 await page.addInitScript(() => {
   const create = URL.createObjectURL.bind(URL),
     blobs = new Map();
@@ -39,14 +41,14 @@ await page.addInitScript(() => {
     } else return click.call(this);
   };
 });
-await page.route('http://127.0.0.1:5173/**', async (route) => {
-  const pathname = decodeURIComponent(new URL(route.request().url()).pathname);
+const server = createServer(async (request, response) => {
+  const pathname = decodeURIComponent(new URL(request.url, 'http://127.0.0.1').pathname);
   const file = path.resolve(root, '.' + (pathname === '/' ? '/index.html' : pathname));
-  if (!file.startsWith(root + path.sep)) return route.fulfill({ status: 403, body: '' });
+  if (!file.startsWith(root + path.sep)) return response.writeHead(403).end();
   try {
-    await route.fulfill({
-      body: await fs.readFile(file),
-      contentType:
+    const body = await fs.readFile(file);
+    response.writeHead(200, {
+      'Content-Type':
         {
           '.html': 'text/html',
           '.js': 'text/javascript',
@@ -55,10 +57,13 @@ await page.route('http://127.0.0.1:5173/**', async (route) => {
           '.png': 'image/png',
         }[path.extname(file)] || 'application/octet-stream',
     });
+    response.end(body);
   } catch {
-    await route.fulfill({ status: 404, body: '' });
+    response.writeHead(404).end();
   }
 });
+await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+const appURL = `http://127.0.0.1:${server.address().port}/`;
 const objects = (p) => p.layouts.find((l) => l.id === p.activeLayoutId).sceneObjects;
 const library = () => page.locator('.scene-object-library');
 const inspector = () => page.locator('.scene-object-inspector');
@@ -100,7 +105,7 @@ async function focusPoint(object, normalizedX, normalizedY) {
 }
 
 try {
-  await page.goto('http://127.0.0.1:5173/', { waitUntil: 'networkidle' });
+  await page.goto(appURL, { waitUntil: 'networkidle' });
   await waitProject(page, (p) => p.layouts[0].sceneObjects.length === 0);
   await page.getByRole('button', { name: /^形状・人/ }).click();
   let count = 0;
@@ -236,6 +241,57 @@ try {
   p = await waitProject(page, (p) => objects(p).at(-1).x !== person.x);
   assert.equal(objects(p).at(-1).y, 0);
   console.log('PASS: copy/delete/undo/redo, 3D selection/context menu and drag');
+  const opened = page.waitForEvent('popup');
+  await page.getByRole('button', { name: '平面図を別ウィンドウで開く', exact: true }).click();
+  const popup = await opened;
+  await popup.locator('.plan-svg').waitFor();
+  await popup.waitForFunction(
+    () => getComputedStyle(document.querySelector('.plan-window')).display === 'flex',
+  );
+  await popup.getByRole('button', { name: '平面図を拡大', exact: true }).click();
+  await popup.waitForFunction(
+    () => document.querySelector('.plan-window-toolbar output')?.textContent.trim() === '125%',
+  );
+  const popupView = await popup.locator('.plan-svg').getAttribute('viewBox');
+  person = objects(p).at(-1);
+  const popupPoint = (x, z) =>
+    popup.locator('.plan-svg').evaluate(
+      (svg, [x, z]) => {
+        const point = new DOMPoint(x, z).matrixTransform(svg.getScreenCTM());
+        return { x: point.x, y: point.y };
+      },
+      [x, z],
+    );
+  const popupStart = await popupPoint(person.x, person.z);
+  const popupEnd = await popupPoint(person.x + 600, person.z + 400);
+  await popup.mouse.move(popupStart.x, popupStart.y);
+  await popup.mouse.down();
+  await popup.mouse.move(popupEnd.x, popupEnd.y, { steps: 6 });
+  await popup.mouse.up();
+  p = await waitProject(
+    page,
+    (q) => objects(q).at(-1).x === person.x + 600 && objects(q).at(-1).z === person.z + 400,
+  );
+  assert.equal(objects(p).at(-1).y, 0);
+  assert.equal(
+    await popup.locator('.plan-svg').getAttribute('viewBox'),
+    popupView,
+    'dragging an object must not pan the detached plan',
+  );
+  await popup.mouse.click(popupEnd.x, popupEnd.y, { button: 'right' });
+  await popup.getByRole('menu', { name: '形状・人物のメニュー' }).waitFor();
+  assert.equal(await page.getByRole('menu').count(), 0);
+  await popup.keyboard.press('Escape');
+  await popup.locator('.plan-window-surface').focus();
+  await popup.keyboard.press('Delete');
+  await waitProject(page, (q) => objects(q).length === count - 1);
+  await popup.keyboard.press('Control+Z');
+  await waitProject(page, (q) => objects(q).length === count && objects(q).at(-1).y === 0);
+  await popup.close();
+  await page.bringToFront();
+  console.log(
+    'PASS: detached plan zoom, silhouette dragging without panning, popup context menu, Delete and Undo',
+  );
   await page.getByRole('button', { name: /^プラン \d/ }).click();
   await page.getByRole('button', { name: '現在のプランを複製', exact: true }).click();
   p = await waitProject(page, (p) => p.layouts.length === 2);
@@ -290,4 +346,5 @@ try {
   throw err;
 } finally {
   await browser.close();
+  await new Promise((resolve) => server.close(resolve));
 }

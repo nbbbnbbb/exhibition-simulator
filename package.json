@@ -22,7 +22,8 @@
     "test:steel-line-faces": "node scripts/steel-line-faces-test.mjs",
     "test:steel": "node scripts/steel-frames-test.mjs",
     "test:lighting": "node scripts/lighting-test.mjs",
-    "test:e2e": "node scripts/browser-test.mjs"
+    "test:e2e": "node scripts/browser-test.mjs",
+    "test:workspace": "node scripts/workspace-test.mjs"
   },
   "dependencies": {
     "react": "19.3.1",
