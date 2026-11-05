@@ -5,7 +5,12 @@ import { chromium } from 'playwright';
 import * as THREE from 'three';
 import { createProject } from '../src/domain.js';
 import { newSteelLine } from '../src/steelLinePlacement.js';
-import { storedProject, waitProject } from './placement-test-helpers.mjs';
+import {
+  storedProject,
+  waitProject,
+  beginSteelLineDrawing,
+  openWorkplaneCoordinates,
+} from './placement-test-helpers.mjs';
 
 const browser = await chromium.launch({
   channel: process.env.PLAYWRIGHT_CHANNEL || 'chrome',
@@ -205,9 +210,10 @@ try {
   await put(open);
   await faceCount(0);
   await page.getByRole('combobox', { name: '鉄骨ラインの作業面', exact: true }).selectOption('xy');
-  await field('作業面の位置 Z', 14000);
+  await openWorkplaneCoordinates(page);
+  await field('作業平面の中心 Z', 14000);
   await page.getByRole('checkbox', { name: '鉄骨ラインを連続配置', exact: true }).uncheck();
-  await page.getByRole('button', { name: '3Dでライン配置を開始', exact: true }).click();
+  await beginSteelLineDrawing(page);
   await point(points[3], true);
   await point(points[0], true);
   await faceCount(1);

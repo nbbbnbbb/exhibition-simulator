@@ -11,6 +11,9 @@ import {
   steelLineEndpoints,
   steelLineLength,
   withSteelLineEndpoints,
+  steelPlaneCenter,
+  moveSteelPlane,
+  DEFAULT_STEEL_LINE_SETTINGS,
 } from '../src/steelLinePlacement.js';
 
 test('水平・垂直・斜めのラインはクリックした端点を保って実寸の部材になる', () => {
@@ -54,7 +57,7 @@ test('水平・垂直の作業面と1mm/10mmスナップ、平行・背面の光
   assert.equal(pointOnSteelPlane([0, 0, 0], [1, 0, 0], { plane: 'xz', offset: 1500 }), null);
   assert.equal(pointOnSteelPlane([0, 0, 0], [0, -1, 0], { plane: 'xz', offset: 1500 }), null);
 });
-test('プレビュー中はプロジェクトを変えず、部材の範囲・長さ・床天井を検証する', () => {
+test('プレビューは長さ・数値を検証し、建物外・床下・天井の外も許可する', () => {
   const p = createProject(),
     before = structuredClone(p),
     tool = { plane: 'xz', offset: 1500, sectionId: 'c65', start: [3000, 1500, 14000] };
@@ -62,11 +65,15 @@ test('プレビュー中はプロジェクトを変えず、部材の範囲・�
   for (const point of [
     [3000, 1500, 14000],
     [3010, 1500, 14000],
-    [0, 1500, 14000],
-    [4000, 0, 14000],
-    [4000, 5500, 14000],
   ])
     assert.equal(previewSteelLine(p, tool, point).valid, false);
+  for (const point of [
+    [-2000, 1500, 14000],
+    [4000, -1000, 14000],
+    [4000, 10000, 14000],
+    [4000, 1500, -5000],
+  ])
+    assert.equal(previewSteelLine(p, tool, point).valid, true);
   assert.equal(
     previewSteelLine(p, { ...tool, start: null }, [3000, 1500, 14000], true).snapped,
     true,
@@ -81,10 +88,30 @@ test('プレビュー中はプロジェクトを変えず、部材の範囲・�
   assert.equal(missingSection.frame, undefined);
   assert.deepEqual(p, before);
 });
-test('L字の入り隅をまたぐラインを拒否し、西室内のラインを許可する', () => {
+test('建物の内外を横切るラインや、負の座標のラインも保存できる', () => {
   const p = createProject();
-  assert.throws(() => newSteelLine(p, [-2000, 1500, 32000], [3000, 1500, 28000], 'c65'), /範囲外/);
+  const external = newSteelLine(p, [-30000, -4000, -10000], [-25000, 7000, -10000], 'c65');
+  p.layouts[0].steelFrames.push(external);
+  assert.deepEqual(validateProject(JSON.parse(JSON.stringify(p))), p);
+  assert.doesNotThrow(() => newSteelLine(p, [-2000, 1500, 32000], [3000, 1500, 28000], 'c65'));
   assert.doesNotThrow(() => newSteelLine(p, [-5000, 1500, 34000], [-2000, 1500, 40000], 'c65'));
+});
+test('作業平面のドラッグ位置から、向きごとの作業面座標を更新する', () => {
+  const original = structuredClone(DEFAULT_STEEL_LINE_SETTINGS);
+  for (const [plane, axis] of [
+    ['xz', 1],
+    ['xy', 2],
+    ['yz', 0],
+  ]) {
+    const moved = moveSteelPlane({ ...original, plane }, [-21000, -3500, 62000]);
+    assert.deepEqual(steelPlaneCenter(moved), [-21000, -3500, 62000]);
+    assert.equal(moved.offset, [-21000, -3500, 62000][axis]);
+    const origin = [-20000, 50000, 65000],
+      direction = [-0.2, -1, -0.3];
+    const point = pointOnSteelPlane(origin, direction, moved);
+    if (point) assert.equal(point[axis], moved.offset);
+  }
+  assert.deepEqual(original, DEFAULT_STEEL_LINE_SETTINGS);
 });
 test('端点編集・全体移動・JSON保存・プラン複製でラインの座標を保持する', () => {
   const p = createProject(),
