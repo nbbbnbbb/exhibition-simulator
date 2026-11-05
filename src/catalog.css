@@ -3,6 +3,55 @@
   flex-wrap: wrap;
   gap: 8px;
 }
+.artwork-list-modes {
+  display: flex;
+  margin: 8px 0 2px;
+}
+.artwork-list-modes button {
+  flex: 1;
+  padding: 6px 3px;
+  font-size: 10px;
+}
+.artwork-list.compact {
+  padding-top: 4px;
+}
+.artwork-list.compact .art-card {
+  margin-bottom: 4px;
+  border-radius: 3px;
+}
+.artwork-list.compact .art-card-body {
+  padding: 7px 9px 5px;
+}
+.artwork-list.compact h3 {
+  margin-bottom: 3px;
+}
+.artwork-list.compact .art-metadata {
+  margin-bottom: 2px;
+  color: #4e6342;
+}
+.artwork-list.compact p {
+  color: #65775a;
+  line-height: 1.5;
+}
+.artwork-list.compact .card-actions {
+  margin-top: 3px;
+}
+.artwork-list.compact .batch-add-button {
+  margin-top: 3px;
+  padding: 3px;
+}
+.structure-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+.bottom-controls {
+  height: auto;
+  min-height: 51px;
+  padding: 9px 0;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
 .catalog-toolbar .button {
   font-size: 11px;
 }
