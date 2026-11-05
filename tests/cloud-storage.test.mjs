@@ -10,6 +10,7 @@ import {
   readCloudProject,
   writeCloudProject,
   MAX_CLOUD_BYTES,
+  DEFAULT_CLOUD_CONFIG,
 } from '../src/cloudStorage.js';
 
 const config = { owner: 'gallery', repo: 'exhibitions', branch: 'saves/main' };
@@ -126,6 +127,7 @@ test('Unicodeと画像を含む保存を読み込み、1 MB超のファイルは
 });
 
 test('別名保存は新規ファイル、上書きは読み込み時のSHAを送り競合を拒否する', async (t) => {
+  const config = DEFAULT_CLOUD_CONFIG;
   const project = createProject();
   const calls = [];
   t.mock.method(globalThis, 'fetch', async (url, options) => {
@@ -157,16 +159,16 @@ test('別名保存は新規ファイル、上書きは読み込み時のSHAを�
     writeCloudProject(config, 'test-token', project, file.name, { ...file, sha: 'stale' }),
     /更新されています/,
   );
-  await assert.rejects(writeCloudProject(config, '', project, 'name'), /トークン/);
+  await assert.rejects(writeCloudProject(config, '', project, 'name'), /ログイン/);
   await assert.rejects(
     writeCloudProject({ ...config, repo: 'other' }, 'test-token', project, 'name', file),
-    /接続先が異なります/,
+    /固定されています/,
   );
 });
 
 test('アクセス拒否・ネットワーク障害・大きすぎる保存を明示し、壊れたプロジェクトを拒否する', async (t) => {
   t.mock.method(globalThis, 'fetch', async () => json({}, 401));
-  await assert.rejects(connectGitHub(config, 'bad'), /トークンが無効/);
+  await assert.rejects(connectGitHub(config, 'bad'), /ログインの有効期限/);
   globalThis.fetch = async () => {
     throw new Error('offline');
   };

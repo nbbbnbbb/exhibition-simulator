@@ -4,5 +4,9 @@ tmp/
 test-results/
 exports/
 *.local
+.env
+.env.*
+!.env.example
+.vercel/
 *.log
 .DS_Store
