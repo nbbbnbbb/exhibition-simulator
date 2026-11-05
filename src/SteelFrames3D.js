@@ -83,7 +83,7 @@ export function makeSteelFrame(f, project, ghost = false) {
         }),
       );
       mesh.name = `${f.name} / ビニール膜 / ${face.name}`;
-      mesh.userData = { steelFrameId: f.id, steelMembrane: true };
+      mesh.userData = { steelFrameId: f.id, steelMembrane: true, steelMembraneFace: index };
       mesh.receiveShadow = true;
       group.add(mesh);
     }

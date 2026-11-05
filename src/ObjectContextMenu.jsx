@@ -1,7 +1,17 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { format } from './domain.js';
 
-export default function ObjectContextMenu({ target, art, partition, onClose, onInfo, onDelete }) {
+export default function ObjectContextMenu({
+  target,
+  art,
+  partition,
+  steelFrame,
+  steelLineFace,
+  membraneFace,
+  onClose,
+  onInfo,
+  onDelete,
+}) {
   const root = useRef();
   const [position, setPosition] = useState({ x: target.x, y: target.y });
   useLayoutEffect(() => {
@@ -28,13 +38,41 @@ export default function ObjectContextMenu({ target, art, partition, onClose, onI
       window.removeEventListener('blur', close);
     };
   }, [onClose]);
-  const name = art?.title || partition?.name;
+  const isMembrane = !!(membraneFace || steelLineFace);
+  const isLine = steelFrame?.kind === 'line';
+  const name =
+    art?.title ||
+    partition?.name ||
+    (membraneFace
+      ? `${steelFrame.name} / ${membraneFace.name}の膜`
+      : steelLineFace
+        ? `${steelLineFace.name}の膜`
+        : steelFrame?.name);
+  const menuLabel = art
+    ? '作品のメニュー'
+    : partition
+      ? '可動壁のメニュー'
+      : isMembrane
+        ? '膜のメニュー'
+        : isLine
+          ? '鉄骨ラインのメニュー'
+          : '鉄骨フレームのメニュー';
+  const deleteLabel = art
+    ? '作品の配置を削除'
+    : partition
+      ? '可動壁を削除'
+      : isMembrane
+        ? 'この面の膜を削除'
+        : isLine
+          ? '鉄骨ラインを削除'
+          : '鉄骨フレームを削除';
+  const dimensions = art || partition || steelFrame;
   return (
     <div
       ref={root}
       className="object-context-menu"
       role="menu"
-      aria-label={art ? '作品のメニュー' : '可動壁のメニュー'}
+      aria-label={menuLabel}
       style={{ left: position.x, top: position.y }}
       onContextMenu={(event) => event.preventDefault()}
       onKeyDown={(event) => {
@@ -65,10 +103,14 @@ export default function ObjectContextMenu({ target, art, partition, onClose, onI
               {format(art.width)} × {format(art.height)} × {format(art.depth)} mm
             </span>
           </>
+        ) : isMembrane ? (
+          <span>{steelLineFace ? '輪郭のラインは残ります' : '鉄骨フレームは残ります'}</span>
+        ) : isLine ? (
+          <span>長さ {format(Math.hypot(...steelFrame.lineEnd))} mm</span>
         ) : (
           <span>
-            {format(partition.width)} × {format(partition.height)} × {format(partition.thickness)}{' '}
-            mm
+            {format(dimensions.width)} × {format(dimensions.height)} ×{' '}
+            {format(dimensions.thickness ?? dimensions.depth)} mm
           </span>
         )}
       </div>
@@ -78,7 +120,7 @@ export default function ObjectContextMenu({ target, art, partition, onClose, onI
         </button>
       )}
       <button role="menuitem" className="context-delete" onClick={onDelete}>
-        {art ? '作品の配置を削除' : '可動壁を削除'}
+        {deleteLabel}
       </button>
     </div>
   );

@@ -448,6 +448,20 @@ export default function Plan({
         className="plan-steel-frame"
         data-steel-frame-id={ghost ? undefined : f.id}
         onPointerDown={ghost ? undefined : (e) => steelDown(e, f)}
+        onContextMenu={
+          ghost
+            ? undefined
+            : (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onObjectContextMenu?.({
+                  type: 'steel-frame',
+                  id: f.id,
+                  x: e.clientX,
+                  y: e.clientY,
+                });
+              }
+        }
         onPointerMove={steelMove}
         onPointerUp={steelUp}
         onPointerCancel={steelUp}
@@ -464,6 +478,18 @@ export default function Plan({
           f.membrane.faces.map((index) => (
             <polygon
               key={`face-${index}`}
+              data-steel-membrane-face={index}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onObjectContextMenu?.({
+                  type: 'steel-membrane',
+                  id: f.id,
+                  faceIndex: index,
+                  x: e.clientX,
+                  y: e.clientY,
+                });
+              }}
               points={shape.faces[index].nodes
                 .map((i) => `${nodes[i][0]},${nodes[i][2]}`)
                 .join(' ')}
@@ -521,6 +547,19 @@ export default function Plan({
                 if (e.button !== 0) return;
                 e.stopPropagation();
                 onSelectSteelLineFace?.(face.id);
+              }
+        }
+        onContextMenu={
+          ghost
+            ? undefined
+            : (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onObjectContextMenu?.(
+                  membrane
+                    ? { type: 'steel-line-face', id: face.id, x: e.clientX, y: e.clientY }
+                    : null,
+                );
               }
         }
       >

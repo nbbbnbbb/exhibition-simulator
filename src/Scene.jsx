@@ -12,6 +12,7 @@ import {
   previewMove,
 } from './artworkPlacement.js';
 import { makeArtworkLabel } from './artworkLabels3D.js';
+import { pickContextObject } from './objectPicking.js';
 import { pickPartitionRail, previewPartition } from './partitionPlacement.js';
 import { makeSteelFrame } from './SteelFrames3D.js';
 import { makeSteelLineFace } from './SteelLineFaces3D.js';
@@ -783,34 +784,14 @@ export const Scene = forwardRef(function Scene(
     function contextObject(ev) {
       if (current.current.steelLineTool) return null;
       cast(ev);
-      const hits = ray.intersectObjects(world.children, true);
-      const occluder = hits.find((h) => {
-        const mat = h.object.material;
-        return mat && mat.colorWrite !== false && (!mat.transparent || mat.opacity >= 0.95);
-      });
-      const art = ray
-        .intersectObjects(
+      const target = pickContextObject(
+        ray.intersectObjects(world.children, true),
+        ray.intersectObjects(
           artGroup.children.filter((g) => g.visible),
           true,
-        )
-        .find(
-          (h) =>
-            h.object.userData.placementId && (!occluder || h.distance <= occluder.distance + 0.002),
-        );
-      const part = hits.find(
-        (h) =>
-          h.object.userData.partitionId && (!occluder || h.distance <= occluder.distance + 0.002),
+        ),
       );
-      if (art && (!part || art.distance <= part.distance + 0.002))
-        return {
-          type: 'artwork',
-          id: art.object.userData.placementId,
-          x: ev.clientX,
-          y: ev.clientY,
-        };
-      return part
-        ? { type: 'partition', id: part.object.userData.partitionId, x: ev.clientX, y: ev.clientY }
-        : null;
+      return target ? { ...target, x: ev.clientX, y: ev.clientY } : null;
     }
     function contextMenu(ev) {
       ev.preventDefault();
