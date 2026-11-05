@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createRoot } from 'react-dom/client';
+import { createPortal } from 'react-dom';
 import { Scene } from './Scene.jsx';
 import Plan from './Plan.jsx';
+import PlanWindow, { usePlanWindow } from './PlanWindow.jsx';
 import LightingPanel from './LightingPanel.jsx';
 import ArtworkCatalog from './ArtworkCatalog.jsx';
 import CloudProjects from './CloudProjects.jsx';
@@ -97,6 +99,9 @@ function Icon({ name, size = 18, ...props }) {
     ruler: 'm3 17 14-14 4 4L7 21l-4-4Zm7-7 2 2m2-6 2 2m-10 6 2 2',
     camera: 'M8 6l2-3h4l2 3h5v15H3V6h5Zm4 4a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z',
     chevron: 'm9 5 7 7-7 7',
+    panelLeft: 'M3 4h18v16H3V4Zm6 0v16m6-12-4 4 4 4',
+    panelRight: 'M3 4h18v16H3V4Zm12 0v16m-6-12 4 4-4 4',
+    popout: 'M14 3h7v7m0-7L10 14M10 3H3v18h18v-7',
   };
   return (
     <svg
@@ -294,6 +299,21 @@ function App() {
     [compareId, setCompareId] = useState(''),
     [filter, setFilter] = useState(''),
     [libraryTab, setLibraryTab] = useState('artworks');
+  const [collapsedPanels, setCollapsedPanels] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('ma:collapsed-panels'));
+      return { library: saved?.library === true, inspector: saved?.inspector === true };
+    } catch {
+      return { library: false, inspector: false };
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('ma:collapsed-panels', JSON.stringify(collapsedPanels));
+    } catch {}
+  }, [collapsedPanels]);
+  const [planWindow, openPlanWindow] = usePlanWindow((message) => setNotice(message));
+  useEffect(closeContextMenu, [planWindow]);
   const [placingArtworkId, setPlacingArtworkId] = useState(null),
     [placingArtworkBatch, setPlacingArtworkBatch] = useState(null),
     [movingPlacementId, setMovingPlacementId] = useState(null),
@@ -800,8 +820,22 @@ function App() {
       }
     };
     window.addEventListener('keydown', key);
-    return () => window.removeEventListener('keydown', key);
-  }, [modal, selected, selectedSteelFrame, drawingSteelLines, steelLinePhase, undo, redo, remove]);
+    planWindow?.addEventListener('keydown', key);
+    return () => {
+      window.removeEventListener('keydown', key);
+      planWindow?.removeEventListener('keydown', key);
+    };
+  }, [
+    modal,
+    selected,
+    selectedSteelFrame,
+    drawingSteelLines,
+    steelLinePhase,
+    undo,
+    redo,
+    remove,
+    planWindow,
+  ]);
   function addArtwork(artworkId, batch = null) {
     cancelPartitionPlacement();
     cancelSteelLine();
@@ -1029,6 +1063,40 @@ function App() {
     }
     fileImport.current.value = '';
   }
+  const planProps = {
+    project,
+    selected,
+    compare,
+    onSelect: select,
+    onObjectContextMenu: openObjectMenu,
+    onMoveGroup: moveGroup,
+    camera: mode === 'walk' ? camera : null,
+    showDimensions: dimensions,
+    selectedPartition,
+    onSelectPartition: selectPartition,
+    onPartitionMove: changePartition,
+    showRails: showRails || placingPartition,
+    placingPartition,
+    partitionPreview,
+    onPartitionPreview: setPartitionPreview,
+    onPlacePartition: commitPartition,
+    selectedSteelFrame,
+    onSelectSteelFrame: selectSteelFrame,
+    onSteelFrameMove: changeSteelFrame,
+    placingArtworkId,
+    placingArtworkBatch,
+    selectedSteelLineFace,
+    onSelectSteelLineFace: selectSteelLineFace,
+    movingPlacementId,
+    movingPlacementIds,
+    onMoveStart: startArtworkMove,
+    onMoveEnd: endArtworkMove,
+    onNotice: tell,
+    placementPreview,
+    onPreview: handlePlacementPreview,
+    onPlace: commitPlacement,
+    labelSettings,
+  };
   if (!loaded)
     return (
       <div className="loading">
@@ -1081,8 +1149,8 @@ function App() {
           />
         </div>
       </header>
-      <div className="workspace">
-        <aside className="library sidebar">
+      <div className={`workspace ${collapsedPanels.library ? 'library-collapsed' : ''}`}>
+        <aside id="library-panel" className="library sidebar" hidden={collapsedPanels.library}>
           <div className="sidebar-tabs">
             <button
               className={libraryTab === 'artworks' ? 'active' : ''}
@@ -1390,11 +1458,41 @@ function App() {
           )}
         </aside>
         <main className="main-workspace">
-          <div className="workspace-title">
-            <div>
-              <p className="eyebrow">GALLERY / 01</p>
-              <h1>展示を、空間で考える。</h1>
-            </div>
+          <div className="workspace-controls">
+            <button
+              className="button panel-toggle"
+              aria-controls="library-panel"
+              aria-expanded={!collapsedPanels.library}
+              aria-label={`左パネルを${collapsedPanels.library ? '開く' : '折り畳む'}`}
+              title={`左パネルを${collapsedPanels.library ? '開く' : '折り畳む'}`}
+              onClick={() => setCollapsedPanels((value) => ({ ...value, library: !value.library }))}
+            >
+              <Icon name="panelLeft" size={16} />
+              <span>作品パネル</span>
+            </button>
+            <button
+              className="button panel-toggle"
+              aria-controls="inspector-panel"
+              aria-expanded={!collapsedPanels.inspector}
+              aria-label={`右パネルを${collapsedPanels.inspector ? '開く' : '折り畳む'}`}
+              title={`右パネルを${collapsedPanels.inspector ? '開く' : '折り畳む'}`}
+              onClick={() =>
+                setCollapsedPanels((value) => ({ ...value, inspector: !value.inspector }))
+              }
+            >
+              <Icon name="panelRight" size={16} />
+              <span>詳細パネル</span>
+            </button>
+            <button
+              className="button plan-window-button"
+              aria-label={
+                planWindow ? '平面図ウィンドウを前面に表示' : '平面図を別ウィンドウで開く'
+              }
+              onClick={openPlanWindow}
+            >
+              <Icon name="popout" size={15} />
+              平面図を別窓で
+            </button>
             <button className="building-chip" onClick={() => setModal('building')}>
               <span className="status-dot" />
               建築・寸法データ
@@ -1648,40 +1746,7 @@ function App() {
                 </span>
                 <span className="scale-badge">単位 mm</span>
               </div>
-              <Plan
-                project={project}
-                selected={selected}
-                compare={compare}
-                onSelect={select}
-                onObjectContextMenu={openObjectMenu}
-                onMoveGroup={moveGroup}
-                camera={mode === 'walk' ? camera : null}
-                showDimensions={dimensions}
-                selectedPartition={selectedPartition}
-                onSelectPartition={selectPartition}
-                onPartitionMove={changePartition}
-                showRails={showRails || placingPartition}
-                placingPartition={placingPartition}
-                partitionPreview={partitionPreview}
-                onPartitionPreview={setPartitionPreview}
-                onPlacePartition={commitPartition}
-                selectedSteelFrame={selectedSteelFrame}
-                onSelectSteelFrame={selectSteelFrame}
-                onSteelFrameMove={changeSteelFrame}
-                placingArtworkId={placingArtworkId}
-                placingArtworkBatch={placingArtworkBatch}
-                selectedSteelLineFace={selectedSteelLineFace}
-                onSelectSteelLineFace={selectSteelLineFace}
-                movingPlacementId={movingPlacementId}
-                movingPlacementIds={movingPlacementIds}
-                onMoveStart={startArtworkMove}
-                onMoveEnd={endArtworkMove}
-                onNotice={tell}
-                placementPreview={placementPreview}
-                onPreview={handlePlacementPreview}
-                onPlace={commitPlacement}
-                labelSettings={labelSettings}
-              />
+              <Plan {...planProps} />
               <div className="plan-legend">
                 <span>
                   <i />
@@ -1766,7 +1831,10 @@ function App() {
             </label>
             <button
               className="lighting-open-button"
-              onClick={() => setInspectorTab((t) => (t === 'lighting' ? 'placement' : 'lighting'))}
+              onClick={() => {
+                setCollapsedPanels((value) => ({ ...value, inspector: false }));
+                setInspectorTab((t) => (t === 'lighting' ? 'placement' : 'lighting'));
+              }}
               aria-pressed={inspectorTab === 'lighting'}
             >
               <Icon name="sun" size={17} />
@@ -1818,6 +1886,8 @@ function App() {
           </footer>
         </main>
         <aside
+          id="inspector-panel"
+          hidden={collapsedPanels.inspector}
           className={`inspector sidebar ${inspectorTab === 'lighting' ? 'lighting-open' : ''}`}
         >
           <div className="inspector-heading inspector-tabs">
@@ -2088,6 +2158,22 @@ function App() {
           )}
         </aside>
       </div>
+      {planWindow &&
+        createPortal(
+          <PlanWindow
+            popup={planWindow}
+            planProps={{
+              ...planProps,
+              onObjectContextMenu: (target) =>
+                openObjectMenu(target ? { ...target, ownerDocument: planWindow.document } : null),
+            }}
+            onUndo={undo}
+            onRedo={redo}
+            canUndo={!!history.past.length}
+            canRedo={!!history.future.length}
+          />,
+          planWindow.document.body,
+        )}
       {notice && (
         <div className="toast" role="status">
           <Icon name="info" size={18} />
@@ -2119,7 +2205,7 @@ function App() {
             frameGeometry(steelFrame, project).shape.faces[contextTarget.faceIndex];
           if (!art && !partition && !steelFrame && !steelLineFace) return null;
           if (contextTarget.type === 'steel-membrane' && !membraneFace) return null;
-          return (
+          const menu = (
             <ObjectContextMenu
               key={`${contextTarget.type}:${contextTarget.id}`}
               target={contextTarget}
@@ -2131,12 +2217,15 @@ function App() {
               onClose={closeContextMenu}
               onInfo={() => {
                 closeContextMenu();
+                window.focus();
                 setModal({ type: 'artwork-info', id: art.id });
               }}
               onDelete={() => {
                 closeContextMenu();
-                if (partition) setModal({ type: 'delete-partition', id: partition.id });
-                else if (steelLineFace) {
+                if (partition) {
+                  window.focus();
+                  setModal({ type: 'delete-partition', id: partition.id });
+                } else if (steelLineFace) {
                   changeSteelLineFace(steelLineFace.id, { enabled: false });
                   tell('この面の膜を削除しました。輪郭のラインは残ります');
                 } else if (membraneFace) {
@@ -2167,6 +2256,9 @@ function App() {
               }}
             />
           );
+          return contextTarget.ownerDocument
+            ? createPortal(menu, contextTarget.ownerDocument.body)
+            : menu;
         })()}
       {modal?.type === 'artwork-info' &&
         (() => {

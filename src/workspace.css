@@ -1,0 +1,118 @@
+.workspace-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 0;
+  flex-shrink: 0;
+}
+.workspace-controls .button {
+  min-height: 28px;
+  padding: 4px 8px;
+  font-size: 10px;
+}
+.workspace-controls .building-chip {
+  margin-left: auto;
+  padding: 5px 8px;
+}
+.workspace-controls .panel-toggle[aria-expanded='false'] {
+  background: #e6ecdd;
+  border-color: #b9c7ae;
+}
+.workspace > .sidebar[hidden] {
+  display: none;
+}
+.workspace .main-workspace {
+  padding-left: 12px;
+  padding-right: 12px;
+}
+.plan-window {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  overflow: hidden;
+  background: #f1f3ea;
+}
+.plan-window-header,
+.plan-window-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+.plan-window-header {
+  justify-content: space-between;
+}
+.plan-window-header > div {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 12px;
+  min-width: 0;
+}
+.plan-window-header strong {
+  font-weight: 500;
+  font-size: 15px;
+}
+.plan-window-header span {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.plan-window-toolbar {
+  flex-wrap: wrap;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+.plan-window-toolbar output {
+  min-width: 48px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.plan-window-surface {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  overflow: hidden;
+  touch-action: none;
+  cursor: grab;
+}
+.plan-window-surface .plan-svg {
+  display: block;
+  padding: 20px;
+  min-width: 0;
+}
+.plan-window-surface.pan-mode *,
+.plan-window-surface.space-pan * {
+  cursor: grab;
+}
+.plan-window-surface.panning,
+.plan-window-surface.panning * {
+  cursor: grabbing;
+}
+.plan-window-footer {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--line);
+  font-size: 10px;
+  color: #7c8d70;
+  background: var(--surface);
+}
+@media (max-width: 800px) {
+  .workspace.library-collapsed .main-workspace {
+    width: 100%;
+  }
+  .workspace-controls .panel-toggle span {
+    display: none;
+  }
+  .plan-window-toolbar .button {
+    padding: 5px 8px;
+    min-height: 30px;
+  }
+}

@@ -15,27 +15,29 @@ export default function ObjectContextMenu({
   const root = useRef();
   const [position, setPosition] = useState({ x: target.x, y: target.y });
   useLayoutEffect(() => {
+    const ownerWindow = root.current.ownerDocument.defaultView;
     const rect = root.current.getBoundingClientRect();
     setPosition({
-      x: Math.max(8, Math.min(target.x, window.innerWidth - rect.width - 8)),
-      y: Math.max(8, Math.min(target.y, window.innerHeight - rect.height - 8)),
+      x: Math.max(8, Math.min(target.x, ownerWindow.innerWidth - rect.width - 8)),
+      y: Math.max(8, Math.min(target.y, ownerWindow.innerHeight - rect.height - 8)),
     });
     root.current.querySelector('[role="menuitem"]')?.focus({ preventScroll: true });
   }, [target]);
   useEffect(() => {
+    const ownerWindow = root.current.ownerDocument.defaultView;
     const outside = (event) => {
       if (!root.current?.contains(event.target)) onClose();
     };
     const close = () => onClose();
-    window.addEventListener('pointerdown', outside, true);
-    window.addEventListener('resize', close);
-    window.addEventListener('scroll', close, true);
-    window.addEventListener('blur', close);
+    ownerWindow.addEventListener('pointerdown', outside, true);
+    ownerWindow.addEventListener('resize', close);
+    ownerWindow.addEventListener('scroll', close, true);
+    ownerWindow.addEventListener('blur', close);
     return () => {
-      window.removeEventListener('pointerdown', outside, true);
-      window.removeEventListener('resize', close);
-      window.removeEventListener('scroll', close, true);
-      window.removeEventListener('blur', close);
+      ownerWindow.removeEventListener('pointerdown', outside, true);
+      ownerWindow.removeEventListener('resize', close);
+      ownerWindow.removeEventListener('scroll', close, true);
+      ownerWindow.removeEventListener('blur', close);
     };
   }, [onClose]);
   const isMembrane = !!(membraneFace || steelLineFace);
@@ -77,7 +79,7 @@ export default function ObjectContextMenu({
       onContextMenu={(event) => event.preventDefault()}
       onKeyDown={(event) => {
         const items = [...root.current.querySelectorAll('[role="menuitem"]')];
-        const index = items.indexOf(document.activeElement);
+        const index = items.indexOf(root.current.ownerDocument.activeElement);
         if (['Escape', 'Tab'].includes(event.key)) {
           event.stopPropagation();
           onClose();
