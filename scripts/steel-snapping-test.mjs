@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { chromium } from 'playwright';
 import * as THREE from 'three';
-import { createProject } from '../src/domain.js';
+import { createProject, fitPartition, partitionGeometry } from '../src/domain.js';
 import { newSteelFrame } from '../src/steelFrames.js';
 import { newSteelLine, steelLineEndpoints } from '../src/steelLinePlacement.js';
 import { storedProject, waitProject, confirmSteelWorkplane } from './placement-test-helpers.mjs';
@@ -58,7 +58,7 @@ const settle = () =>
 const data = (key) => host.getAttribute(`data-${key}`);
 const point = async () => (await data('steel-line-point')).split(',').map(Number);
 let camera;
-async function at(p, { click = false, dx = 0, dy = 0 } = {}) {
+async function at(p, { click = false, dx = 0, dy = 0, button = 'left' } = {}) {
   const r = await page.locator('canvas').boundingBox();
   camera.aspect = r.width / r.height;
   camera.updateProjectionMatrix();
@@ -68,12 +68,13 @@ async function at(p, { click = false, dx = 0, dy = 0 } = {}) {
     y = r.y + ((1 - v.y) * r.height) / 2 + dy;
   assert.ok(x > r.x && x < r.x + r.width && y > r.y && y < r.y + r.height, `point visible: ${p}`);
   await page.mouse.move(x, y);
-  if (click) await page.mouse.click(x, y);
+  if (click) await page.mouse.click(x, y, { button });
 }
-async function seedScene(name, extra = [], width = 3000) {
+async function seedScene(name, extra = [], width = 3000, partitions = []) {
   const seed = createProject();
   seed.name = name;
   seed.layouts[0].placements = [];
+  seed.layouts[0].partitions = partitions;
   const f = { ...newSteelFrame(seed, 'rectangle'), width };
   seed.layouts[0].steelFrames = [f, ...extra];
   await page.locator('input[type=file][accept=".json"]').setInputFiles({
@@ -207,6 +208,39 @@ try {
   );
   await page.screenshot({ path: `${output}/building-snap.png`, fullPage: true });
   check('building-edge snapping and orthogonal mode combine without leaving the chosen axis');
+  await page.getByRole('button', { name: 'ライン配置を終了', exact: true }).click();
+  const contextSeed = createProject();
+  const partition = fitPartition(
+    {
+      id: 'context-wall',
+      name: '右クリック検証の壁',
+      railId: 'rail-cross-3',
+      s: 4500,
+      width: 3000,
+      height: 5000,
+      thickness: 200,
+    },
+    contextSeed.building,
+    contextSeed.rails,
+  );
+  const g = partitionGeometry(partition, contextSeed.rails);
+  await seedScene('鉄骨配置と右クリックの両立', [], 3000, [partition]);
+  await at([g.x, 2000, g.z], { click: true, button: 'right' });
+  await page.getByRole('menu', { name: '可動壁のメニュー', exact: true }).waitFor();
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: /^鉄骨 \d/ }).click();
+  await page.getByRole('button', { name: '作業平面を配置', exact: true }).click();
+  await at([g.x, 2000, g.z], { click: true, button: 'right' });
+  assert.equal(await data('steel-workplane-phase'), 'plane');
+  assert.equal(await page.getByRole('menu').count(), 0);
+  await confirmSteelWorkplane(page);
+  await at([g.x, 2000, g.z], { click: true, button: 'right' });
+  assert.equal(await data('steel-workplane-phase'), 'draw');
+  assert.equal(await page.getByRole('menu').count(), 0);
+  assert.equal(frames(await storedProject(page)).length, 1);
+  check(
+    'normal object menus work, while right-click during steel placement preserves plane/drawing mode',
+  );
   assert.deepEqual(errors, []);
   await fs.writeFile(
     `${output}/report.json`,

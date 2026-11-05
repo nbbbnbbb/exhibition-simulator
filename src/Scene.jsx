@@ -780,6 +780,7 @@ export const Scene = forwardRef(function Scene(
     };
     controls.addEventListener('change', cameraChange);
     function contextObject(ev) {
+      if (current.current.steelLineTool) return null;
       cast(ev);
       const hits = ray.intersectObjects(world.children, true);
       const occluder = hits.find((h) => {
