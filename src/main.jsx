@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Scene } from './Scene.jsx';
 import Plan from './Plan.jsx';
@@ -13,7 +13,16 @@ import {
   FrameShapeEditor,
   SteelSectionEditor,
 } from './SteelFrames.jsx';
-import { newSteelFrame, validateFrame } from './steelFrames.js';
+import { newSteelFrame, validateFrame, steelSections } from './steelFrames.js';
+import { SteelLineControls, SteelLineInspector } from './SteelLines.jsx';
+import { SteelLineFaceList, SteelLineFaceInspector } from './SteelLineFaces.jsx';
+import { detectSteelLineFaces, pruneSteelLineMembranes } from './steelLineFaces.js';
+import {
+  DEFAULT_STEEL_LINE_SETTINGS,
+  STEEL_LINE_PLANES,
+  newSteelLine,
+  steelLineEndpoints,
+} from './steelLinePlacement.js';
 import { arrangeArtworks } from './artworkArrangement.js';
 import {
   addSuppliedArtworks,
@@ -235,6 +244,7 @@ function App() {
       }
     });
   const [selectedSteelFrame, setSelectedSteelFrame] = useState(null);
+  const [selectedSteelLineFace, setSelectedSteelLineFace] = useState(null);
   useEffect(() => {
     try {
       localStorage.setItem('ma:show-floor-lines', String(showRails));
@@ -259,6 +269,24 @@ function App() {
     [movingPlacementId, setMovingPlacementId] = useState(null),
     [movingPlacementIds, setMovingPlacementIds] = useState([]),
     [placementPreview, setPlacementPreview] = useState(null);
+  const [steelLineSettings, setSteelLineSettings] = useState(DEFAULT_STEEL_LINE_SETTINGS),
+    [drawingSteelLines, setDrawingSteelLines] = useState(false),
+    [steelLineStart, setSteelLineStart] = useState(null),
+    [steelLinePreview, setSteelLinePreview] = useState(null);
+  const steelLineTool = drawingSteelLines ? { ...steelLineSettings, start: steelLineStart } : null;
+  useEffect(() => {
+    if (!steelSections(project).some((section) => section.id === steelLineSettings.sectionId))
+      setSteelLineSettings((s) => ({ ...s, sectionId: 'c65' }));
+  }, [project, steelLineSettings.sectionId]);
+  const cancelSteelLine = useCallback(() => {
+    setDrawingSteelLines(false);
+    setSteelLineStart(null);
+    setSteelLinePreview(null);
+  }, []);
+  useEffect(cancelSteelLine, [project.activeLayoutId, modal]);
+  useEffect(() => {
+    if (view !== 'three' || mode !== 'orbit' || libraryTab !== 'steel') cancelSteelLine();
+  }, [view, mode, libraryTab]);
   const scene = useRef(),
     fileImport = useRef();
   const revision = useRef(0),
@@ -270,6 +298,9 @@ function App() {
   const steelFrames = layout.steelFrames || [],
     activeSteelFrame = steelFrames.find((f) => f.id === selectedSteelFrame);
   useEffect(() => setSelectedSteelFrame(null), [project.activeLayoutId]);
+  useEffect(() => setSelectedSteelLineFace(null), [project.activeLayoutId]);
+  const steelLineFaces = useMemo(() => detectSteelLineFaces(steelFrames), [steelFrames]),
+    activeSteelLineFace = steelLineFaces.find((face) => face.id === selectedSteelLineFace);
   const ws = walls(project.building, parts, project.rails),
     p = layout.placements.find((p) => p.id === selected[0]),
     a = project.artworks.find((a) => a.id === p?.artworkId),
@@ -359,6 +390,7 @@ function App() {
         const next = structuredClone(h.present);
         try {
           fn(next);
+          pruneSteelLineMembranes(next);
           validateProject(next);
           assertInventoryChange(h.present, next);
         } catch (err) {
@@ -388,6 +420,8 @@ function App() {
     [],
   );
   const select = useCallback((id, multi = false) => {
+    setSelectedSteelLineFace(null);
+    cancelSteelLine();
     setSelectedSteelFrame(null);
     setSelectedPartition(null);
     setSelected((ids) =>
@@ -395,17 +429,101 @@ function App() {
     );
   }, []);
   const selectPartition = useCallback((id) => {
+    setSelectedSteelLineFace(null);
+    cancelSteelLine();
     setSelectedSteelFrame(null);
     setSelected([]);
     setSelectedPartition(id);
   }, []);
   const selectSteelFrame = useCallback((id) => {
+    setSelectedSteelLineFace(null);
+    cancelSteelLine();
     cancelPlacement();
     setSelected([]);
     setSelectedPartition(null);
     setSelectedSteelFrame(id);
     setInspectorTab('placement');
   }, []);
+  const selectSteelLineFace = useCallback((id) => {
+    cancelSteelLine();
+    cancelPlacement();
+    setSelected([]);
+    setSelectedPartition(null);
+    setSelectedSteelFrame(null);
+    setSelectedSteelLineFace(id);
+    setInspectorTab('placement');
+  }, []);
+  const changeSteelLineFace = useCallback(
+    (id, changes) =>
+      update((d) => {
+        const l = d.layouts.find((l) => l.id === d.activeLayoutId),
+          face = detectSteelLineFaces(l.steelFrames).find((f) => f.id === id);
+        if (!face) throw new Error('閉じたライン面がありません');
+        if (changes.enabled === false) {
+          l.steelLineMembranes = l.steelLineMembranes.filter((m) => m.faceId !== id);
+          return;
+        }
+        let membrane = l.steelLineMembranes.find((m) => m.faceId === id);
+        if (!membrane) {
+          membrane = { faceId: id, lineIds: face.lineIds, color: '#edf4ef', opacity: 0.35 };
+          l.steelLineMembranes.push(membrane);
+        }
+        if (changes.color !== undefined) membrane.color = changes.color;
+        if (changes.opacity !== undefined) membrane.opacity = changes.opacity;
+      }),
+    [update],
+  );
+  function startSteelLines(fromFrame) {
+    setSelectedSteelLineFace(null);
+    cancelPlacement();
+    setView('three');
+    setMode('orbit');
+    setLibraryTab('steel');
+    setSelected([]);
+    setSelectedPartition(null);
+    setSelectedSteelFrame(null);
+    setInspectorTab('placement');
+    const point = fromFrame?.kind === 'line' ? steelLineEndpoints(fromFrame)[1] : null;
+    if (point)
+      setSteelLineSettings((s) => ({
+        ...s,
+        sectionId: fromFrame.sectionId,
+        offset: point[STEEL_LINE_PLANES.find((p) => p.id === s.plane).axis],
+      }));
+    setSteelLineStart(point);
+    setSteelLinePreview(null);
+    setDrawingSteelLines(true);
+  }
+  const commitSteelLinePoint = useCallback(
+    (preview) => {
+      if (!preview?.valid || !preview.point) return;
+      if (!steelLineStart) {
+        setSteelLineStart(preview.point);
+        setSteelLinePreview(null);
+        return;
+      }
+      try {
+        const frame = newSteelLine(
+          project,
+          steelLineStart,
+          preview.point,
+          steelLineSettings.sectionId,
+        );
+        // Validate capacity before advancing a continuous chain.
+        const next = structuredClone(project);
+        next.layouts.find((l) => l.id === next.activeLayoutId).steelFrames.push(frame);
+        validateProject(next);
+        update((d) => d.layouts.find((l) => l.id === d.activeLayoutId).steelFrames.push(frame));
+        setSelectedSteelFrame(frame.id);
+        setSteelLineStart(steelLineSettings.continuous ? preview.point : null);
+        setSteelLinePreview(null);
+        if (!steelLineSettings.continuous) setDrawingSteelLines(false);
+      } catch (err) {
+        tell(err.message);
+      }
+    },
+    [project, steelLineStart, steelLineSettings, update, tell],
+  );
   const changeSteelFrame = useCallback(
     (id, changes) =>
       update((d) => {
@@ -483,6 +601,10 @@ function App() {
       )
         return;
       if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ') {
+        if (drawingSteelLines) {
+          setSteelLineStart(null);
+          setSteelLinePreview(null);
+        }
         e.preventDefault();
         e.shiftKey ? redo() : undo();
       }
@@ -499,17 +621,24 @@ function App() {
         removeSteelFrame(selectedSteelFrame);
       }
       if (e.code === 'Escape') {
+        setSelectedSteelLineFace(null);
+        cancelSteelLine();
         cancelPlacement();
         setSelected([]);
         setSelectedPartition(null);
         setSelectedSteelFrame(null);
         setMode('orbit');
       }
+      if (e.code === 'Enter' && drawingSteelLines) {
+        e.preventDefault();
+        cancelSteelLine();
+      }
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
-  }, [modal, selected, selectedSteelFrame, undo, redo, remove]);
+  }, [modal, selected, selectedSteelFrame, drawingSteelLines, undo, redo, remove]);
   function addArtwork(artworkId) {
+    cancelSteelLine();
     const art = project.artworks.find((a) => a.id === artworkId);
     const problem = placementProblem(art) || inventoryProblem(art, layout.placements);
     if (problem) return tell(problem);
@@ -913,6 +1042,26 @@ function App() {
               selected={selectedSteelFrame}
               onSelect={selectSteelFrame}
               onAdd={addSteelFrame}
+              lineFaces={
+                <SteelLineFaceList
+                  faces={steelLineFaces}
+                  membranes={layout.steelLineMembranes}
+                  selected={selectedSteelLineFace}
+                  onSelect={selectSteelLineFace}
+                  onToggle={(id, enabled) => changeSteelLineFace(id, { enabled })}
+                />
+              }
+              lineControls={
+                <SteelLineControls
+                  project={project}
+                  settings={steelLineSettings}
+                  onSettings={setSteelLineSettings}
+                  active={drawingSteelLines}
+                  start={steelLineStart}
+                  onStart={() => startSteelLines()}
+                  onStop={cancelSteelLine}
+                />
+              }
               onRegister={() => setModal('frame-shape')}
               onRemoveShape={(id) =>
                 update((d) => {
@@ -1110,6 +1259,24 @@ function App() {
             </button>
           </div>
           <div className={`viewport view-${view}`}>
+            {drawingSteelLines && (
+              <div
+                className={`steel-line-banner ${steelLinePreview?.valid === false ? 'invalid' : ''}`}
+                role="status"
+              >
+                <strong>{steelLineStart ? '終点をクリック' : '始点をクリック'} · 鉄骨ライン</strong>
+                <span>
+                  {steelLinePreview?.message || '作業面上の点を選択してください'}
+                  {steelLinePreview?.point && ` · ${steelLinePreview.point.join(' / ')} mm`}
+                  {steelLinePreview?.length > 0 &&
+                    ` · 長さ ${Math.round(steelLinePreview.length).toLocaleString()} mm`}
+                  {steelLinePreview?.snapped ? ' · 端点に吸着' : ''}
+                </span>
+                <button className="button" onClick={cancelSteelLine}>
+                  配置を終了
+                </button>
+              </div>
+            )}
             {movingArt && (
               <div
                 className={`drag-feedback ${placementPreview?.valid === false ? 'invalid' : ''}`}
@@ -1145,6 +1312,12 @@ function App() {
                 selectedSteelFrame={selectedSteelFrame}
                 onSelectSteelFrame={selectSteelFrame}
                 onSteelFrameMove={changeSteelFrame}
+                selectedSteelLineFace={selectedSteelLineFace}
+                onSelectSteelLineFace={selectSteelLineFace}
+                steelLineTool={steelLineTool}
+                steelLinePreview={steelLinePreview}
+                onSteelLinePreview={setSteelLinePreview}
+                onSteelLinePoint={commitSteelLinePoint}
                 showRails={showRails}
                 onSelectPartition={selectPartition}
                 onPartitionMove={changePartition}
@@ -1210,6 +1383,8 @@ function App() {
                     selectedSteelFrame={selectedSteelFrame}
                     onSelectSteelFrame={selectSteelFrame}
                     onSteelFrameMove={changeSteelFrame}
+                    selectedSteelLineFace={selectedSteelLineFace}
+                    onSelectSteelLineFace={selectSteelLineFace}
                     onPartitionMove={changePartition}
                     showRails={showRails}
                   />
@@ -1247,6 +1422,8 @@ function App() {
                 onSelectSteelFrame={selectSteelFrame}
                 onSteelFrameMove={changeSteelFrame}
                 placingArtworkId={placingArtworkId}
+                selectedSteelLineFace={selectedSteelLineFace}
+                onSelectSteelLineFace={selectSteelLineFace}
                 movingPlacementId={movingPlacementId}
                 movingPlacementIds={movingPlacementIds}
                 onMoveStart={startArtworkMove}
@@ -1400,6 +1577,33 @@ function App() {
                 setView('three');
                 scene.current?.windowView(side);
               }}
+            />
+          ) : activeSteelLineFace ? (
+            <SteelLineFaceInspector
+              face={activeSteelLineFace}
+              membrane={layout.steelLineMembranes.find((m) => m.faceId === activeSteelLineFace.id)}
+              onToggle={(enabled) => changeSteelLineFace(activeSteelLineFace.id, { enabled })}
+              onChange={(changes) => changeSteelLineFace(activeSteelLineFace.id, changes)}
+              onFocus={() => {
+                setMode('orbit');
+                setView('three');
+                scene.current?.focusSteelLineFace(activeSteelLineFace.id);
+              }}
+            />
+          ) : activeSteelFrame?.kind === 'line' ? (
+            <SteelLineInspector
+              frame={activeSteelFrame}
+              project={project}
+              onChange={(changes) => changeSteelFrame(activeSteelFrame.id, changes)}
+              onFocus={() => {
+                setMode('orbit');
+                setView('three');
+                scene.current?.focusSteelFrame(activeSteelFrame.id);
+              }}
+              onContinue={() => startSteelLines(activeSteelFrame)}
+              onDuplicate={() => duplicateSteelFrame(activeSteelFrame)}
+              onRemove={() => removeSteelFrame(activeSteelFrame.id)}
+              onRegisterSection={() => setModal('steel-section')}
             />
           ) : activeSteelFrame ? (
             <SteelFrameInspector
@@ -2265,13 +2469,23 @@ function BuildingModal({ building, onClose, onSave }) {
         </>
       ) : (
         <div className="reference-panel">
-          <a href={`${import.meta.env.BASE_URL}references/1_100.pdf`} target="_blank" rel="noreferrer">
+          <a
+            href={`${import.meta.env.BASE_URL}references/1_100.pdf`}
+            target="_blank"
+            rel="noreferrer"
+          >
             <Icon name="download" />
             添付の1/100図面を開く
           </a>
           <div>
-            <img src={`${import.meta.env.BASE_URL}references/interior-01.png`} alt="主展示室の梁と照明の参考写真" />
-            <img src={`${import.meta.env.BASE_URL}references/interior-02.png`} alt="中二階と柱の参考写真" />
+            <img
+              src={`${import.meta.env.BASE_URL}references/interior-01.png`}
+              alt="主展示室の梁と照明の参考写真"
+            />
+            <img
+              src={`${import.meta.env.BASE_URL}references/interior-02.png`}
+              alt="中二階と柱の参考写真"
+            />
           </div>
           <p className="muted">写真は建築形態・素材の参照です。写真から実寸を確定していません。</p>
         </div>

@@ -7,7 +7,15 @@ import { ceilingStructure } from './architecture.js';
 import { pickWall, previewPlacement, previewMove } from './artworkPlacement.js';
 import { makeArtworkLabel } from './artworkLabels3D.js';
 import { makeSteelFrame } from './SteelFrames3D.js';
-import { validateFrame } from './steelFrames.js';
+import { makeSteelLineFace } from './SteelLineFaces3D.js';
+import { detectSteelLineFaces } from './steelLineFaces.js';
+import { validateFrame, frameGeometry } from './steelFrames.js';
+import {
+  pointOnSteelPlane,
+  previewSteelLine,
+  steelLineEndpoints,
+  steelLineLength,
+} from './steelLinePlacement.js';
 import {
   walls,
   polygon,
@@ -32,6 +40,12 @@ export const Scene = forwardRef(function Scene(
     selectedSteelFrame,
     onSelectSteelFrame,
     onSteelFrameMove,
+    selectedSteelLineFace,
+    onSelectSteelLineFace,
+    steelLineTool,
+    steelLinePreview,
+    onSteelLinePreview,
+    onSteelLinePoint,
     showRails,
     onSelectPartition,
     onPartitionMove,
@@ -67,6 +81,12 @@ export const Scene = forwardRef(function Scene(
     selectedSteelFrame,
     onSelectSteelFrame,
     onSteelFrameMove,
+    selectedSteelLineFace,
+    onSelectSteelLineFace,
+    steelLineTool,
+    steelLinePreview,
+    onSteelLinePreview,
+    onSteelLinePoint,
     showRails,
     onSelectPartition,
     onPartitionMove,
@@ -98,6 +118,8 @@ export const Scene = forwardRef(function Scene(
         project.steelSections,
         project.layouts.find((l) => l.id === project.activeLayoutId)?.steelFrames,
         compare?.steelFrames,
+        project.layouts.find((l) => l.id === project.activeLayoutId)?.steelLineMembranes,
+        compare?.steelLineMembranes,
         labelSettings,
       ]),
     [project, compare, labelSettings],
@@ -145,18 +167,45 @@ export const Scene = forwardRef(function Scene(
         .steelFrames.find((f) => f.id === id);
       if (!e || !f) return;
       const angle = (f.rotation * Math.PI) / 180,
-        distance = (Math.max(f.width, f.height, f.depth) / 1000) * 1.7;
-      const target = new THREE.Vector3(m(f.x), m(f.y + f.height / 2), m(f.z));
+        distance = Math.max(
+          2,
+          ((f.kind === 'line' ? steelLineLength(f) : Math.max(f.width, f.height, f.depth)) / 1000) *
+            1.7,
+        );
+      const target =
+        f.kind === 'line'
+          ? new THREE.Vector3(...steelLineEndpoints(f)[0].map((v, i) => m(v + f.lineEnd[i] / 2)))
+          : new THREE.Vector3(m(f.x), m(f.y + f.height / 2), m(f.z));
       e.controls.target.copy(target);
       e.camera.position
         .copy(target)
         .add(
           new THREE.Vector3(
-            Math.sin(angle) * distance,
-            distance * 0.25,
+            (f.kind === 'line' ? 0.45 : Math.sin(angle)) * distance,
+            distance * (f.kind === 'line' ? 0.5 : 0.25),
             Math.cos(angle) * distance,
           ),
         );
+      e.controls.update();
+      e.skipFit = true;
+    },
+    focusSteelLineFace(id) {
+      const e = engine.current,
+        c = current.current,
+        l = c.project.layouts.find((l) => l.id === c.project.activeLayoutId);
+      const face = detectSteelLineFaces(l.steelFrames).find((f) => f.id === id);
+      if (!e || !face) return;
+      const target = new THREE.Vector3(
+        ...face.points[0].map(
+          (_, i) => face.points.reduce((sum, p) => sum + p[i], 0) / face.points.length / 1000,
+        ),
+      );
+      const distance = Math.max(2, (Math.sqrt(face.area) / 1000) * 1.8);
+      e.controls.target.copy(target);
+      e.camera.position
+        .copy(target)
+        .add(new THREE.Vector3(...face.normal).multiplyScalar(distance));
+      if (Math.abs(face.normal[1]) < 0.9) e.camera.position.y += distance * 0.25;
       e.controls.update();
       e.skipFit = true;
     },
@@ -299,9 +348,11 @@ export const Scene = forwardRef(function Scene(
     const artGroup = new THREE.Group();
     const ghostGroup = new THREE.Group();
     const previewGroup = new THREE.Group();
+    const steelDraftGroup = new THREE.Group();
+    steelDraftGroup.userData.editorOnly = true;
     previewGroup.userData.editorOnly = true;
     previewGroup.visible = false;
-    scene.add(world, ceiling, artGroup, ghostGroup, floorLines, previewGroup);
+    scene.add(world, ceiling, artGroup, ghostGroup, floorLines, previewGroup, steelDraftGroup);
     const gridHelper = new THREE.GridHelper(160, 160, '#9daba3', '#c0c8c0');
     gridHelper.position.y = 0.006;
     gridHelper.material.transparent = true;
@@ -337,6 +388,7 @@ export const Scene = forwardRef(function Scene(
       artGroup,
       ghostGroup,
       previewGroup,
+      steelDraftGroup,
       gridHelper,
       textures,
       loader,
@@ -445,7 +497,46 @@ export const Scene = forwardRef(function Scene(
       if (JSON.stringify(result) !== JSON.stringify(c.placementPreview)) c.onPreview?.(result);
       return result;
     }
+    function steelLinePointer(ev) {
+      const c = current.current,
+        tool = c.steelLineTool;
+      if (!tool) return null;
+      cast(ev);
+      e.lastSteelPointer = { clientX: ev.clientX, clientY: ev.clientY, altKey: ev.altKey };
+      let point = pointOnSteelPlane(
+          ray.ray.origin.toArray().map((v) => v * 1000),
+          ray.ray.direction.toArray(),
+          tool,
+          ev.altKey ? 1 : 10,
+        ),
+        snapped = false,
+        closest = 12;
+      const rect = renderer.domElement.getBoundingClientRect();
+      const layout = c.project.layouts.find((l) => l.id === c.project.activeLayoutId);
+      for (const frame of layout.steelFrames)
+        for (const node of frameGeometry(frame, c.project).nodes) {
+          const projected = new THREE.Vector3(...node.map(m)).project(camera);
+          if (projected.z < -1 || projected.z > 1) continue;
+          const distance = Math.hypot(
+            ((projected.x - pointer.x) * rect.width) / 2,
+            ((projected.y - pointer.y) * rect.height) / 2,
+          );
+          if (distance < closest) {
+            closest = distance;
+            point = node.map(Math.round);
+            snapped = true;
+          }
+        }
+      const preview = previewSteelLine(c.project, tool, point, snapped);
+      if (JSON.stringify(preview) !== JSON.stringify(c.steelLinePreview))
+        c.onSteelLinePreview?.(preview);
+      return preview;
+    }
+    e.refreshSteelPreview = () => {
+      if (e.lastSteelPointer && current.current.steelLineTool) steelLinePointer(e.lastSteelPointer);
+    };
     const cameraChange = () => {
+      e.refreshSteelPreview();
       if (e.lastPointer && (current.current.placingArtworkId || drag?.type === 'artwork'))
         pointerPreview(e.lastPointer);
     };
@@ -453,6 +544,15 @@ export const Scene = forwardRef(function Scene(
     function down(ev) {
       if (ev.button !== 0) return;
       const c = current.current;
+      if (c.steelLineTool) {
+        ev.stopImmediatePropagation();
+        ev.preventDefault();
+        renderer.domElement.focus();
+        const preview = steelLinePointer(ev);
+        if (preview?.valid) c.onSteelLinePoint?.(preview);
+        else if (preview?.message) c.onNotice(preview.message);
+        return;
+      }
       if (c.placingArtworkId) {
         ev.stopImmediatePropagation();
         ev.preventDefault();
@@ -482,6 +582,20 @@ export const Scene = forwardRef(function Scene(
       const steelHit = ray
         .intersectObjects(world.children, true)
         .find((h) => h.object.userData.steelFrameId);
+      const faceHit = ray
+        .intersectObjects(world.children, true)
+        .find((h) => h.object.userData.steelLineFaceId);
+      if (
+        c.mode !== 'walk' &&
+        faceHit &&
+        (!occluder || faceHit.distance <= occluder.distance + 0.002) &&
+        (!steelHit || faceHit.distance < steelHit.distance - 0.08) &&
+        (!hit || faceHit.distance < hit.distance)
+      ) {
+        c.onSelectSteelLineFace?.(faceHit.object.userData.steelLineFaceId);
+        ev.stopImmediatePropagation();
+        return;
+      }
       if (
         c.mode !== 'walk' &&
         steelHit &&
@@ -569,6 +683,10 @@ export const Scene = forwardRef(function Scene(
       }
     }
     function move(ev) {
+      if (current.current.steelLineTool) {
+        steelLinePointer(ev);
+        return;
+      }
       if (current.current.placingArtworkId) {
         pointerPreview(ev);
         return;
@@ -681,6 +799,8 @@ export const Scene = forwardRef(function Scene(
       if (drag?.type === 'artwork' || drag?.type === 'steel') up();
     };
     function leave() {
+      e.lastSteelPointer = null;
+      if (current.current.steelLineTool) current.current.onSteelLinePreview?.(null);
       e.lastPointer = null;
       if (current.current.placingArtworkId) current.current.onPreview?.(null);
     }
@@ -1140,6 +1260,21 @@ export const Scene = forwardRef(function Scene(
       e.world.add(group);
     }
     for (const f of compare?.steelFrames || []) e.ghostGroup.add(makeSteelFrame(f, project, true));
+    const lineFaces = detectSteelLineFaces(layout.steelFrames);
+    for (const face of lineFaces)
+      e.world.add(
+        makeSteelLineFace(
+          face,
+          layout.steelLineMembranes.find((m) => m.faceId === face.id),
+          selectedSteelLineFace === face.id,
+        ),
+      );
+    for (const face of detectSteelLineFaces(compare?.steelFrames || []))
+      e.ghostGroup.add(makeSteelLineFace(face, null, false, true));
+    host.current.dataset.steelLineFaceCount = String(lineFaces.length);
+    host.current.dataset.steelLineMembraneCount = String(
+      lineFaces.filter((f) => layout.steelLineMembranes.some((m) => m.faceId === f.id)).length,
+    );
     host.current.dataset.steelFrameCount = String(layout.steelFrames?.length || 0);
     host.current.dataset.steelMembraneCount = String(
       (layout.steelFrames || []).reduce((n, f) => n + f.membrane.faces.length, 0),
@@ -1326,7 +1461,78 @@ export const Scene = forwardRef(function Scene(
       host.current.dataset.artworkLabelCount = String(
         e.artGroup.children.filter((g) => g.children.some((o) => o.userData.artworkLabel)).length,
       );
-  }, [geometryKey, selected, details, selectedPartition, selectedSteelFrame, movingPlacementIds]);
+  }, [
+    geometryKey,
+    selected,
+    details,
+    selectedPartition,
+    selectedSteelFrame,
+    selectedSteelLineFace,
+    movingPlacementIds,
+  ]);
+  useEffect(() => {
+    const e = engine.current;
+    if (!e) return;
+    e.refreshSteelPreview?.();
+    e.renderer.domElement.style.cursor = steelLineTool ? 'crosshair' : '';
+    e.controls.mouseButtons.RIGHT = steelLineTool ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
+    if (!steelLineTool) e.lastSteelPointer = null;
+  }, [steelLineTool, geometryKey]);
+  useEffect(() => {
+    const e = engine.current;
+    if (!e) return;
+    const group = e.steelDraftGroup;
+    for (const child of [...group.children]) {
+      child.traverse((o) => {
+        o.geometry?.dispose();
+        o.material?.dispose();
+      });
+      group.remove(child);
+    }
+    const preview = steelLinePreview;
+    host.current.dataset.steelLineDrawing = String(!!steelLineTool);
+    host.current.dataset.steelLineValid = String(preview?.valid === true);
+    host.current.dataset.steelLinePoint = preview?.point?.join(',') || '';
+    host.current.dataset.steelLineStart = steelLineTool?.start?.join(',') || '';
+    host.current.dataset.steelLineSnapped = String(preview?.snapped === true);
+    if (!steelLineTool) return;
+    const planeAxis = { xz: 1, xy: 2, yz: 0 }[steelLineTool.plane];
+    const center = steelLineTool.start
+      ? [...steelLineTool.start]
+      : [project.building.mainWidth / 2, project.building.height / 2, 15000];
+    center[planeAxis] = steelLineTool.offset;
+    const guide = new THREE.GridHelper(10, 10, '#7da590', '#b8ccbe');
+    guide.position.set(...center.map(m));
+    if (steelLineTool.plane === 'xy') guide.rotation.x = Math.PI / 2;
+    if (steelLineTool.plane === 'yz') guide.rotation.z = Math.PI / 2;
+    guide.material.transparent = true;
+    guide.material.opacity = 0.3;
+    group.add(guide);
+    const color = preview?.valid === false ? '#ce513b' : '#4d9c68';
+    const marker = (point, c) => {
+      const mesh = new THREE.Mesh(
+        new THREE.SphereGeometry(0.055, 12, 8),
+        new THREE.MeshBasicMaterial({ color: c, depthTest: false }),
+      );
+      mesh.position.set(...point.map(m));
+      mesh.renderOrder = 10;
+      group.add(mesh);
+    };
+    if (steelLineTool.start) marker(steelLineTool.start, '#b68b53');
+    if (preview?.point) marker(preview.point, color);
+    if (preview?.frame && preview.length > 0) {
+      const beam = makeSteelFrame(preview.frame, project);
+      beam.traverse((o) => {
+        if (o.userData.steelMember) {
+          o.material.color.set(color);
+          o.material.transparent = true;
+          o.material.opacity = 0.55;
+          o.castShadow = false;
+        }
+      });
+      group.add(beam);
+    }
+  }, [steelLineTool, steelLinePreview, project]);
   useEffect(() => {
     const e = engine.current;
     if (!e) return;
