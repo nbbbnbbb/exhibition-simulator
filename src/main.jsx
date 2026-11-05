@@ -4,6 +4,8 @@ import { Scene } from './Scene.jsx';
 import Plan from './Plan.jsx';
 import LightingPanel from './LightingPanel.jsx';
 import ArtworkCatalog from './ArtworkCatalog.jsx';
+import CloudProjects from './CloudProjects.jsx';
+import { cloudURL, parseCloudURL, readCloudProject } from './cloudStorage.js';
 import PackingFields from './PackingFields.jsx';
 import ArtworkLabelOptions from './ArtworkLabelOptions.jsx';
 import ArtworkArrangement from './ArtworkArrangement.jsx';
@@ -239,6 +241,11 @@ function App() {
   const [loaded, setLoaded] = useState(false),
     [saveStatus, setSaveStatus] = useState('読込中'),
     [storageEnabled, setStorageEnabled] = useState(true);
+  const [cloudSession, setCloudSession] = useState(null);
+  const [cloudFile, setCloudFile] = useState(null);
+  const [cloudPending, setCloudPending] = useState(null);
+  const [cloudError, setCloudError] = useState('');
+  const cloudNavigation = useRef(0);
   const [selectedPartition, setSelectedPartition] = useState(null),
     [partitionFace, setPartitionFace] = useState('front'),
     [showRails, setShowRails] = useState(() => {
@@ -267,7 +274,6 @@ function App() {
     [view, setView] = useState('split'),
     [mode, setMode] = useState('orbit'),
     [grid, setGrid] = useState(false),
-    [details, setDetails] = useState(true),
     [cutawayRoof, setCutawayRoof] = useState(true),
     [inspectorTab, setInspectorTab] = useState('placement'),
     [eye, setEye] = useState(1600),
@@ -352,6 +358,11 @@ function App() {
     w = ws.find((w) => w.id === p?.wallId);
   const issues = layoutIssues(project);
   const labelSettings = project.artworkLabels || DEFAULT_LABELS;
+  const displaySettings = project.displaySettings;
+  const setDisplaySetting = (key, value) =>
+    update((d) => {
+      d.displaySettings[key] = value;
+    });
   const placingArt = project.artworks.find((art) => art.id === placingArtworkId);
   const movingArt = project.artworks.find(
     (art) => art.id === layout.placements.find((p) => p.id === movingPlacementId)?.artworkId,
@@ -386,29 +397,107 @@ function App() {
     if (placingArtworkId && !placingArt) cancelPlacement();
   }, [placingArtworkId, placingArt]);
   const tell = useCallback((message) => setNotice(message), []);
+  const applyOpenedProject = useCallback((data) => {
+    const d = validateProject(data);
+    setHistory((h) => ({ past: [...h.past.slice(-39), h.present], present: d, future: [] }));
+    setStorageEnabled(true);
+    setSelected([]);
+    setSelectedPartition(null);
+    setSelectedSteelFrame(null);
+    setCompareId('');
+  }, []);
+  function markCloudFile(file) {
+    setCloudFile(file);
+    window.history.replaceState(null, '', cloudURL(file.config, file.path));
+  }
+  async function openCloudFile(path, session) {
+    const result = await readCloudProject(session.config, session.token, path);
+    applyOpenedProject(result.project);
+    markCloudFile(result.file);
+    setCloudPending(null);
+    setCloudError('');
+    setModal(null);
+    tell('GitHubの保存を開きました。直前の状態へは「元に戻す」で戻せます');
+  }
   useEffect(() => {
     let live = true;
-    readProject()
-      .then((d) => {
+    async function start() {
+      try {
+        const d = await readProject();
         if (!live) return;
         if (d) {
           validateProject(addSuppliedArtworks(d));
           setHistory({ past: [], present: d, future: [] });
           setSelected([]);
         }
-        setLoaded(true);
-      })
-      .catch((err) => {
+      } catch (err) {
         if (!live) return;
         setStorageEnabled(false);
-        setLoaded(true);
         setSaveStatus('保存停止');
         tell(`保存データを開けません。既存データ保護のため自動保存を停止しました：${err.message}`);
-      });
+      }
+      try {
+        const link = parseCloudURL(window.location.href);
+        if (link) {
+          setCloudPending(link);
+          const result = await readCloudProject(link.config, '', link.path);
+          if (!live) return;
+          applyOpenedProject(result.project);
+          setCloudFile(result.file);
+          setCloudPending(null);
+        }
+      } catch (err) {
+        if (!live) return;
+        setCloudError(`URLの保存を開けませんでした：${err.message}`);
+        setModal('cloud');
+      }
+      if (live) setLoaded(true);
+    }
+    start();
     return () => {
       live = false;
     };
   }, []);
+  useEffect(() => {
+    let live = true;
+    const navigate = async () => {
+      const attempt = ++cloudNavigation.current;
+      setCloudFile(null);
+      setCloudPending(null);
+      setCloudError('');
+      try {
+        const link = parseCloudURL(window.location.href);
+        if (!link) return;
+        setCloudPending(link);
+        setLoaded(false);
+        const connected = cloudSession?.config;
+        const token =
+          connected &&
+          connected.owner === link.config.owner &&
+          connected.repo === link.config.repo &&
+          connected.branch === link.config.branch
+            ? cloudSession.token
+            : '';
+        const result = await readCloudProject(link.config, token, link.path);
+        if (!live || cloudNavigation.current !== attempt) return;
+        applyOpenedProject(result.project);
+        setCloudFile(result.file);
+        setCloudPending(null);
+        setModal(null);
+      } catch (err) {
+        if (!live || cloudNavigation.current !== attempt) return;
+        setCloudError(`URLの保存を開けませんでした：${err.message}`);
+        setModal('cloud');
+      } finally {
+        if (live && cloudNavigation.current === attempt) setLoaded(true);
+      }
+    };
+    window.addEventListener('hashchange', navigate);
+    return () => {
+      live = false;
+      window.removeEventListener('hashchange', navigate);
+    };
+  }, [cloudSession, applyOpenedProject]);
   useEffect(() => {
     if (!loaded || !storageEnabled) return;
     const r = ++revision.current;
@@ -917,12 +1006,13 @@ function App() {
     if (!file) return;
     try {
       if (file.size > 80 * 1024 * 1024) throw new Error('JSONは80 MB以内にしてください');
-      const d = validateProject(JSON.parse(await file.text()));
-      setHistory((h) => ({ past: [...h.past.slice(-39), h.present], present: d, future: [] }));
-      setStorageEnabled(true);
-      setSelected([]);
-      setSelectedPartition(null);
-      setCompareId('');
+      applyOpenedProject(JSON.parse(await file.text()));
+      setCloudFile(null);
+      setCloudPending(null);
+      setCloudError('');
+      const url = new URL(window.location.href);
+      url.hash = '';
+      window.history.replaceState(null, '', url.href);
       tell('プロジェクトを取り込みました。直前の状態へは「元に戻す」で戻せます');
     } catch (err) {
       tell(`取り込み失敗：${err.message}`);
@@ -960,6 +1050,9 @@ function App() {
           </span>
         </div>
         <div className="header-actions">
+          <Button icon="layers" onClick={() => setModal('cloud')}>
+            クラウド保存
+          </Button>
           <Button icon="info" onClick={() => setModal('help')}>
             使い方
           </Button>
@@ -1023,8 +1116,25 @@ function App() {
                   value={filter}
                   onChange={(e) => setFilter(e.target.value)}
                 />
+                <div className="segmented artwork-list-modes" aria-label="作品リストの表示">
+                  {[
+                    ['cards', '画像付き'],
+                    ['compact', '一覧（画像なし）'],
+                  ].map(([id, label]) => (
+                    <button
+                      key={id}
+                      aria-pressed={displaySettings.artworkList === id}
+                      className={displaySettings.artworkList === id ? 'active' : ''}
+                      onClick={() => setDisplaySetting('artworkList', id)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
               </div>
-              <div className="artwork-list">
+              <div
+                className={`artwork-list ${displaySettings.artworkList === 'compact' ? 'compact' : ''}`}
+              >
                 {project.artworks
                   .filter((a) =>
                     [a.title, a.artist, ...Object.keys(CATALOG_FIELDS).map((key) => a[key])]
@@ -1041,17 +1151,19 @@ function App() {
                         className={`art-card ${art.id === a?.id ? 'current' : ''}`}
                         key={art.id}
                       >
-                        <div className="art-thumb">
-                          {art.image ? (
-                            <img src={art.image} alt={art.title} loading="lazy" />
-                          ) : (
-                            <div className="no-art-image">
-                              <Icon name="image" />
-                              画像未登録
-                            </div>
-                          )}
-                          <span>{String(i + 1).padStart(2, '0')}</span>
-                        </div>
+                        {displaySettings.artworkList === 'cards' && (
+                          <div className="art-thumb">
+                            {art.image ? (
+                              <img src={art.image} alt={art.title} loading="lazy" />
+                            ) : (
+                              <div className="no-art-image">
+                                <Icon name="image" />
+                                画像未登録
+                              </div>
+                            )}
+                            <span>{String(i + 1).padStart(2, '0')}</span>
+                          </div>
+                        )}
                         <div className="art-card-body">
                           <h3>{art.title}</h3>
                           <p className="art-metadata">
@@ -1065,15 +1177,16 @@ function App() {
                               ? `${format(art.width)} × ${format(art.height)} × ${format(art.depth)} mm`
                               : `実寸未入力 / 厚み ${format(art.depth)} mm`}
                           </p>
-                          {(art.sizeText || art.quantity !== undefined) && (
-                            <p className="art-size-source">
-                              {art.sizeText}
-                              {art.sizeText ? ' / ' : ''}
-                              {art.quantity
-                                ? `${art.quantity}点${art.notes?.includes('くらい') ? '程度' : ''}`
-                                : '点数未定'}
-                            </p>
-                          )}
+                          {displaySettings.artworkList === 'cards' &&
+                            (art.sizeText || art.quantity !== undefined) && (
+                              <p className="art-size-source">
+                                {art.sizeText}
+                                {art.sizeText ? ' / ' : ''}
+                                {art.quantity
+                                  ? `${art.quantity}点${art.notes?.includes('くらい') ? '程度' : ''}`
+                                  : '点数未定'}
+                              </p>
+                            )}
                           <div className="card-actions">
                             <span className={count ? 'placed' : ''}>
                               {count} / {quantityLimit(art) ?? '数量未定'} 点配置中
@@ -1416,7 +1529,7 @@ function App() {
                 compare={compare}
                 mode={mode}
                 grid={grid}
-                details={details}
+                displaySettings={displaySettings}
                 cutawayRoof={cutawayRoof}
                 eye={eye}
                 selectedPartition={selectedPartition}
@@ -1653,14 +1766,22 @@ function App() {
                 {layout.lighting.rails ? 'L ' + layout.lighting.railLux : 'L OFF'} lx
               </span>
             </button>
-            <label className="check-label">
-              <input
-                type="checkbox"
-                checked={details}
-                onChange={(e) => setDetails(e.target.checked)}
-              />
-              梁・中二階
-            </label>
+            <div className="structure-toggles" aria-label="建築の表示設定">
+              {[
+                ['beams', '梁'],
+                ['mezzanine', '中二階'],
+                ['lightingRails', '照明レール'],
+              ].map(([key, label]) => (
+                <label className="check-label" key={key}>
+                  <input
+                    type="checkbox"
+                    checked={displaySettings[key]}
+                    onChange={(e) => setDisplaySetting(key, e.target.checked)}
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
             <div className="toolbar-spacer" />
             <span
               className="dimension-warning"
@@ -2088,6 +2209,26 @@ function App() {
           Button={Button}
         />
       )}
+      {modal === 'cloud' && (
+        <CloudProjects
+          project={project}
+          session={cloudSession}
+          onSession={setCloudSession}
+          currentFile={cloudFile}
+          pending={cloudPending}
+          initialError={cloudError}
+          onOpen={openCloudFile}
+          onSaved={(file) => {
+            markCloudFile(file);
+            setCloudPending(null);
+            setCloudError('');
+            tell('GitHubに保存しました。URLからこの保存を開けます');
+          }}
+          onClose={() => setModal(null)}
+          Modal={Modal}
+          Button={Button}
+        />
+      )}
       {modal === 'catalog' && (
         <ArtworkCatalog
           artworks={project.artworks}
@@ -2337,7 +2478,7 @@ function App() {
               </p>
               <h3>05 / 保存と持ち出し</h3>
               <p>
-                操作はIndexedDBへ自動保存。「書き出す」で画像・建築・全プランを含むJSONを保存し、「開く」で復元できます。ブラウザーのデータ消去に備え、JSONを定期的に保管してください。プランタブから設営CSVを書き出せます。
+                操作はIndexedDBへ自動保存。「クラウド保存」でGitHubの保存リストを開き、別名保存・上書き保存・URL共有ができます。保存を開くとURLに保存先が付きます。公開リポジトリでは画像も公開され、非公開の場合は開く側にもアクセス権が必要です。「書き出す」「開く」ではJSONでも持ち出せます。プランタブから設営CSVを書き出せます。
               </p>
               <h3>寸法について</h3>
               <p>

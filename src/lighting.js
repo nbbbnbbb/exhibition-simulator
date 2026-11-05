@@ -5,6 +5,7 @@ import {
   ceilingStructure,
   structuralBounds,
   spotTrackLayout,
+  glazingFrames,
 } from './architecture.js';
 const PI = Math.PI,
   rad = (d) => (d * PI) / 180,
@@ -189,6 +190,11 @@ export function solarState(l) {
     window: sun.direction.z < 0 ? 'north' : 'south',
   };
 }
+export function compassDirection(azimuth) {
+  return ['北', '北東', '東', '南東', '南', '南西', '西', '北西'][
+    Math.round((((azimuth % 360) + 360) % 360) / 45) % 8
+  ];
+}
 export function kelvinRGB(k) {
   const t = clamp(k, 1800, 10000) / 100;
   const r = t <= 66 ? 255 : 329.698727446 * Math.pow(t - 60, -0.1332047592);
@@ -248,12 +254,14 @@ export function fixtureLayout(b, partitionRails = createRails(b)) {
   }));
   return { spots, rails, tracks };
 }
-// Midpoint integration is shared by the illuminance readout and area-light calibration.
+// Stratified area integration is shared by the readout and area-light calibration.
 export function areaFactor(point, normal, area, visible = () => true) {
   let result = 0;
   const n = 12;
   for (let i = 0; i < n; i++)
-    for (const t of [-0.25, 0.25]) {
+    for (let column = 0; column < 2; column++) {
+      // Stagger width samples across rows: fixed columns can all coincide with mullions.
+      const t = (column + (((i + 0.5) * 0.61803398875) % 1)) / 2 - 0.5;
       const source = {
         x:
           area.position.x +
@@ -343,22 +351,25 @@ export function sunWindowHit(point, d, b) {
   if (x < 0 || x > b.mainWidth / 1000 || y < 0 || y > b.height / 1000) return null;
   return { x, y, z, window: d.z < 0 ? 'north' : 'south' };
 }
-export function segmentBox(a, b, min, max) {
+function segmentBoxEntry(a, b, min, max) {
   let lo = 0,
     hi = 1;
   for (const key of ['x', 'y', 'z']) {
     const delta = b[key] - a[key];
     if (Math.abs(delta) < 1e-10) {
-      if (a[key] < min[key] || a[key] > max[key]) return false;
+      if (a[key] < min[key] || a[key] > max[key]) return null;
       continue;
     }
     const t1 = (min[key] - a[key]) / delta,
       t2 = (max[key] - a[key]) / delta;
     lo = Math.max(lo, Math.min(t1, t2));
     hi = Math.min(hi, Math.max(t1, t2));
-    if (lo > hi) return false;
+    if (lo > hi) return null;
   }
-  return hi > 1e-4 && lo < 0.9999;
+  return hi > 1e-4 && lo < 0.9999 ? lo : null;
+}
+export function segmentBox(a, b, min, max) {
+  return segmentBoxEntry(a, b, min, max) !== null;
 }
 export function occluderBoxes(b, partitions = [], rails = createRails(b)) {
   const W = b.mainWidth / 1000,
@@ -380,7 +391,30 @@ export function occluderBoxes(b, partitions = [], rails = createRails(b)) {
     box(west, b.mezzanineHeight / 1000 - 0.14, j, 0, b.mezzanineHeight / 1000 + 0.14, L - 4.97),
     box(0, b.mezzanineHeight / 1000 - 0.14, L - 8.62, W, b.mezzanineHeight / 1000 + 0.14, L - 4.97),
   ];
-  for (const member of ceilingStructure(b, rails).members) boxes.push(structuralBounds(member));
+  boxes.forEach((box, i) => {
+    box.kind = i < 5 ? 'wall' : i === 5 ? 'column' : 'mezzanine';
+    box.name = i < 5 ? '外壁（扉を含む）' : i === 5 ? '柱' : '中二階';
+  });
+  for (const [x1, z1, x2, z2] of [
+    [0, 0, W, L],
+    [west, j, 0, L],
+  ])
+    boxes.push({ ...box(x1, H, z1, x2, H + 0.002, z2), kind: 'roof', name: '天井' });
+  for (const member of ceilingStructure(b, rails).members)
+    boxes.push({ ...structuralBounds(member), kind: 'beam', name: '天井の梁・レール' });
+  for (const f of glazingFrames(b))
+    boxes.push({
+      ...box(
+        (f.x - f.width / 2) / 1000,
+        (f.y - f.height / 2) / 1000,
+        (f.z - f.depth / 2) / 1000,
+        (f.x + f.width / 2) / 1000,
+        (f.y + f.height / 2) / 1000,
+        (f.z + f.depth / 2) / 1000,
+      ),
+      kind: 'window-frame',
+      name: '窓枠',
+    });
   for (const p of partitions) {
     const r = rails.find((r) => r.id === p.railId);
     if (!r) continue;
@@ -390,9 +424,68 @@ export function occluderBoxes(b, partitions = [], rails = createRails(b)) {
       z = (r.z1 + ((r.z2 - r.z1) / distance) * p.s) / 1000;
     const hx = (vertical ? p.thickness : p.width) / 2000,
       hz = (vertical ? p.width : p.thickness) / 2000;
-    boxes.push(box(x - hx, 0, z - hz, x + hx, p.height / 1000, z + hz));
+    boxes.push({
+      ...box(x - hx, 0, z - hz, x + hx, p.height / 1000, z + hz),
+      kind: 'partition',
+      name: p.name || '可動壁',
+      partitionId: p.id,
+    });
   }
   return boxes;
+}
+// Trace toward the Sun: the first opaque surface determines the shadow at this point.
+// The receiver normal accounts for the illuminated/shaded faces of a movable wall.
+export function directSunExposure(
+  point,
+  normal,
+  l,
+  b,
+  partitions = [],
+  rails = createRails(b),
+  context = {},
+) {
+  const sun = context.sun ?? solarState(l);
+  const result = {
+    status: 'off',
+    lux: 0,
+    incidence: Math.max(0, dot(normal, sun.direction)),
+    window: null,
+    occluder: null,
+  };
+  if (!l.daylight) return result;
+  if (sun.altitude <= 0) return { ...result, status: 'night' };
+  if (sun.normalLux <= 0)
+    return { ...result, status: sun.blocked && sun.visibility === 0 ? 'surroundings' : 'off' };
+  if (result.incidence <= 0) return { ...result, status: 'back-facing' };
+  const hit = sunWindowHit(point, sun.direction, b);
+  // Frames straddle the glazing plane, so tracing to the window includes their thickness.
+  const distance = hit
+    ? length(sub(hit, point))
+    : Math.hypot(b.overallWidth, b.height, b.length) / 500;
+  const end = {
+    x: point.x + sun.direction.x * distance,
+    y: point.y + sun.direction.y * distance,
+    z: point.z + sun.direction.z * distance,
+  };
+  const boxes = context.boxes ?? occluderBoxes(b, partitions, rails);
+  let first = null,
+    entry = Infinity;
+  for (const box of boxes) {
+    const t = segmentBoxEntry(point, end, box.min, box.max);
+    if (t !== null && t < entry) {
+      entry = t;
+      first = box;
+    }
+  }
+  if (first)
+    return {
+      ...result,
+      status: 'occluded',
+      window: hit?.window ?? null,
+      occluder: { kind: first.kind, name: first.name, partitionId: first.partitionId },
+    };
+  if (!hit) return { ...result, status: 'no-window' };
+  return { ...result, status: 'lit', window: hit.window, lux: sun.normalLux * result.incidence };
 }
 export function sampleIlluminance(point, normal, l, b, partitions = [], rails = createRails(b)) {
   const sun = solarState(l),
@@ -420,8 +513,7 @@ export function sampleIlluminance(point, normal, l, b, partitions = [], rails = 
     (n, a) => n + a.luminance * areaFactor(point, normal, a, visible),
     0,
   );
-  const hit = sunWindowHit(point, sun.direction, b);
-  const direct = hit && visible(hit) ? sun.normalLux * Math.max(0, dot(normal, sun.direction)) : 0;
+  const direct = directSunExposure(point, normal, l, b, partitions, rails, { sun, boxes }).lux;
   const indirect = indirectLux(l, sun) * (0.25 + (0.75 * (1 - clamp(normal.y, -1, 1))) / 2);
   return { spot, rail, sky, direct, indirect, total: spot + rail + sky + direct + indirect };
 }

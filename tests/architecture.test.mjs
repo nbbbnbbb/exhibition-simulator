@@ -36,7 +36,9 @@ test('可動壁ラインの変更・反転にレール付き梁と遮光形状�
   assert.equal(beam.z, 14500);
   const bounds = structuralBounds(beam);
   assert.ok(
-    occluderBoxes(b, [], rails).some((box) => JSON.stringify(box) === JSON.stringify(bounds)),
+    occluderBoxes(b, [], rails).some(
+      ({ min, max }) => JSON.stringify({ min, max }) === JSON.stringify(bounds),
+    ),
   );
 });
 test('可動壁レールを持たないコンクリート梁が残る', () => {

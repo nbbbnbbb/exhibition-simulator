@@ -4,7 +4,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { LightingRig } from './LightingRig.js';
-import { ceilingStructure } from './architecture.js';
+import { ceilingStructure, glazingFrames } from './architecture.js';
 import {
   pickWall,
   previewArtworkAddition,
@@ -48,7 +48,7 @@ export const Scene = forwardRef(function Scene(
     compare,
     mode,
     grid,
-    details,
+    displaySettings,
     cutawayRoof,
     eye,
     selectedPartition,
@@ -98,7 +98,7 @@ export const Scene = forwardRef(function Scene(
     compare,
     mode,
     grid,
-    details,
+    displaySettings,
     cutawayRoof,
     eye,
     selectedPartition,
@@ -1249,7 +1249,18 @@ export const Scene = forwardRef(function Scene(
       }
       gridHelper.visible = c.grid && c.mode !== 'walk' && !renderer.xr.isPresenting;
       floorLines.visible = c.showRails;
+      if (
+        e.beamsGroup?.visible !== c.displaySettings.beams ||
+        e.mezzanineGroup?.visible !== c.displaySettings.mezzanine
+      )
+        renderer.shadowMap.needsUpdate = true;
+      if (e.beamsGroup) e.beamsGroup.visible = c.displaySettings.beams;
+      if (e.mezzanineGroup) e.mezzanineGroup.visible = c.displaySettings.mezzanine;
+      e.lightingRig.setFixturesVisible(c.displaySettings.lightingRails);
       if (host.current) {
+        host.current.dataset.showBeams = String(e.beamsGroup?.visible);
+        host.current.dataset.showMezzanine = String(e.mezzanineGroup?.visible);
+        host.current.dataset.showLightingRails = String(c.displaySettings.lightingRails);
         host.current.dataset.floorLines = String(c.showRails);
         host.current.dataset.floorLineCount = String(c.showRails ? floorLines.children.length : 0);
       }
@@ -1525,22 +1536,9 @@ export const Scene = forwardRef(function Scene(
       skirting.position.z += w.normal.z * 0.003;
       skirting.rotation.copy(mesh.rotation);
       e.world.add(skirting);
-      if (!w.hangable) {
-        for (let s = 0; s <= w.length; s += 1120) {
-          box(
-            e.world,
-            45,
-            b.height,
-            45,
-            w.start.x + w.tangent.x * s,
-            b.height / 2,
-            w.start.z + w.tangent.z * s,
-            '#65716d',
-          );
-        }
-        box(e.world, b.mainWidth, 65, 60, b.mainWidth / 2, 2400, w.start.z, '#65716d');
-      }
     }
+    for (const f of glazingFrames(b))
+      box(e.world, f.width, f.height, f.depth, f.x, f.y, f.z, '#65716d');
     {
       for (const r of project.rails) {
         const line = new THREE.Line(
@@ -1621,6 +1619,8 @@ export const Scene = forwardRef(function Scene(
     // The structural details below are explicitly estimated, not surveyed dimensions.
     {
       const structure = new THREE.Group();
+      e.beamsGroup = structure;
+      structure.visible = displaySettings.beams;
       e.world.add(structure);
       const structural = ceilingStructure(b, project.rails);
       e.structural = structural;
@@ -1674,10 +1674,14 @@ export const Scene = forwardRef(function Scene(
         );
         structure.add(mesh);
       }
+      const mezzanine = new THREE.Group();
+      e.mezzanineGroup = mezzanine;
+      mezzanine.visible = displaySettings.mezzanine;
+      e.world.add(mezzanine);
       const west = b.mainWidth - b.overallWidth,
         junction = b.length - b.wingDepth;
       box(
-        structure,
+        mezzanine,
         -west,
         280,
         b.wingDepth - 4970,
@@ -1687,7 +1691,7 @@ export const Scene = forwardRef(function Scene(
         '#b3b4a8',
       );
       box(
-        structure,
+        mezzanine,
         b.mainWidth,
         280,
         3650,
@@ -1697,9 +1701,9 @@ export const Scene = forwardRef(function Scene(
         '#b3b4a8',
       );
       for (let x = west; x < b.mainWidth; x += 220)
-        box(structure, 30, 950, 30, x, b.mezzanineHeight + 615, b.length - 4970 - 3650, '#9baba1');
+        box(mezzanine, 30, 950, 30, x, b.mezzanineHeight + 615, b.length - 4970 - 3650, '#9baba1');
       box(
-        structure,
+        mezzanine,
         b.overallWidth,
         55,
         55,
@@ -1709,14 +1713,7 @@ export const Scene = forwardRef(function Scene(
         '#8d9b94',
       );
       for (let z = junction; z < b.length - 4970; z += 220)
-        box(structure, 30, 950, 30, 0, b.mezzanineHeight + 615, z, '#9baba1');
-      if (!details)
-        structure.traverse((o) => {
-          if (o.material) {
-            o.material.colorWrite = false;
-            o.material.depthWrite = false;
-          }
-        });
+        box(mezzanine, 30, 950, 30, 0, b.mezzanineHeight + 615, z, '#9baba1');
     }
     box(
       e.world,
@@ -1803,7 +1800,6 @@ export const Scene = forwardRef(function Scene(
   }, [
     geometryKey,
     selected,
-    details,
     selectedPartition,
     selectedSteelFrame,
     selectedSteelLineFace,

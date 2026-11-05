@@ -190,6 +190,14 @@ export class LightingRig {
     renderer.shadowMap.autoUpdate = false;
     renderer.shadowMap.needsUpdate = true;
   }
+  setFixturesVisible(visible) {
+    if (this.fixturesVisible === visible) return;
+    this.fixturesVisible = visible;
+    // Hide fixture geometry while keeping the actual lighting settings intact.
+    this.group.traverse((object) => {
+      if (object.isMesh) object.visible = visible;
+    });
+  }
   update(l) {
     if (this.last === l) return null;
     const previous = this.last;
@@ -256,9 +264,16 @@ export class LightingRig {
       !previous ||
       becameLit ||
       skyBecameLit ||
-      ['date', 'minutes', 'latitude', 'longitude', 'sunSoftness', 'spotSoftness', 'spotAngle'].some(
-        (k) => previous[k] !== l[k],
-      )
+      [
+        'date',
+        'minutes',
+        'latitude',
+        'longitude',
+        'utcOffset',
+        'sunSoftness',
+        'spotSoftness',
+        'spotAngle',
+      ].some((k) => previous[k] !== l[k])
     )
       this.renderer.shadowMap.needsUpdate = true;
     return sun;

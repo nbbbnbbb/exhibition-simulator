@@ -4,6 +4,7 @@ import { createRails } from './architecture.js';
 import { validateSteelProject } from './steelFrames.js';
 import { validateSteelLineMembranes } from './steelLineFaces.js';
 import { DEFAULT_LABELS, LABEL_FIELDS } from './artworkLabels.js';
+import { DEFAULT_DISPLAY_SETTINGS, validateDisplaySettings } from './displaySettings.js';
 import {
   addSuppliedArtworks,
   placementProblem,
@@ -444,6 +445,7 @@ export function createProject() {
     rails: createRails(DEFAULT_BUILDING),
     artworks,
     artworkLabels: structuredClone(DEFAULT_LABELS),
+    displaySettings: { ...DEFAULT_DISPLAY_SETTINGS },
     frameShapes: [],
     steelSections: [],
     layouts: [
@@ -468,6 +470,7 @@ export function createProject() {
 export function validateProject(d) {
   if (!d || d.schemaVersion !== SCHEMA_VERSION || typeof d.name !== 'string' || d.name.length > 200)
     throw new Error('対応するMAプロジェクト形式ではありません（schemaVersion: 1）');
+  validateDisplaySettings(d);
   d.artworkLabels ??= structuredClone(DEFAULT_LABELS);
   if (
     typeof d.artworkLabels.enabled !== 'boolean' ||
