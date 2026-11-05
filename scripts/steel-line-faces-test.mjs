@@ -224,6 +224,7 @@ try {
   await page.getByRole('button', { name: '平面', exact: true }).click();
   assert.equal(await page.locator('.plan-panel [data-steel-line-face-id]').count(), 1);
   await page.screenshot({ path: `${output}/membrane-plan.png`, fullPage: true });
+  p = await waitProject(page, (p) => p.displaySettings.view === 'plan');
   check(
     'drawing the final segment creates a face immediately; its membrane also appears in plan view',
   );

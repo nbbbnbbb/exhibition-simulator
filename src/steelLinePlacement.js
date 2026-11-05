@@ -14,6 +14,30 @@ export const STEEL_LINE_PLANES = [
   { id: 'xy', name: '垂直面 XY', axis: 2, label: '作業面の位置 Z', defaultOffset: 15000 },
   { id: 'yz', name: '垂直面 YZ', axis: 0, label: '作業面の位置 X', defaultOffset: 4500 },
 ];
+export function validateSteelLineSettings(project) {
+  if (
+    project.steelLineSettings != null &&
+    (typeof project.steelLineSettings !== 'object' || Array.isArray(project.steelLineSettings))
+  )
+    throw new Error('鉄骨ラインの作業設定が不正です');
+  const settings = {
+    ...structuredClone(DEFAULT_STEEL_LINE_SETTINGS),
+    ...project.steelLineSettings,
+  };
+  if (
+    !STEEL_LINE_PLANES.some((plane) => plane.id === settings.plane) ||
+    !Number.isSafeInteger(settings.offset) ||
+    !Array.isArray(settings.center) ||
+    settings.center.length !== 3 ||
+    !settings.center.every(Number.isSafeInteger) ||
+    !['continuous', 'snap', 'orthogonal'].every((key) => typeof settings[key] === 'boolean') ||
+    !steelSections(project).some((section) => section.id === settings.sectionId)
+  )
+    throw new Error('鉄骨ラインの作業設定が不正です');
+  settings.center = steelPlaneCenter(settings);
+  project.steelLineSettings = settings;
+  return settings;
+}
 export function steelPlaneCenter(settings) {
   const axis = STEEL_LINE_PLANES.find((p) => p.id === settings.plane)?.axis;
   const center = [...(settings.center || DEFAULT_STEEL_LINE_SETTINGS.center)];

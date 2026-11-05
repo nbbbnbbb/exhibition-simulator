@@ -385,6 +385,24 @@ export default function Plan({
       pz = w.start.z + w.tangent.z * p.s;
     const thick = mini ? 380 : 210;
     const selectedArt = selected.includes(p.id);
+    const labelRows = labelSettings?.enabled ? artworkLabelRows(a, labelSettings) : [];
+    const labelFontSize = (330 * (labelSettings?.fontSize || 16)) / 16;
+    const labelLineHeight = (labelFontSize * (labelSettings?.lineHeight || 150)) / 100;
+    const aboveY =
+      pz +
+      (w.normal.z * thick) / 2 -
+      (Math.abs(w.tangent.z) * a.width) / 2 -
+      thick / 2 -
+      (labelSettings?.gap ?? 90) -
+      labelFontSize * 0.3 -
+      (labelRows.length - 1) * labelLineHeight;
+    const labelY =
+      labelSettings?.position === 'overlay'
+        ? pz +
+          (w.normal.z * thick) / 2 +
+          labelFontSize * 0.35 -
+          ((labelRows.length - 1) * labelLineHeight) / 2
+        : aboveY;
     return (
       <g
         data-placement-id={ghost ? undefined : p.id}
@@ -430,20 +448,22 @@ export default function Plan({
             </title>
           </line>
         )}
-        {!ghost && !mini && labelSettings?.enabled && (
+        {!ghost && !mini && labelRows.length > 0 && (
           <text
             className="plan-artwork-label"
             data-artwork-label={p.id}
-            x={px + w.normal.x * 1100}
-            y={pz + w.normal.z * 1100}
-            textAnchor={w.normal.x < 0 ? 'end' : 'start'}
+            data-label-position={labelSettings.position}
+            x={px}
+            y={labelY}
+            textAnchor="middle"
+            style={{ fontSize: `${labelFontSize}px` }}
           >
-            {artworkLabelRows(a, labelSettings).map((row, index) => (
+            {labelRows.map((row, index) => (
               <tspan
                 key={row.key}
                 data-label-field={row.key}
-                x={px + w.normal.x * 1100}
-                dy={index ? 480 : 0}
+                x={px}
+                dy={index ? labelLineHeight : 0}
               >
                 {`${row.key === 'title' ? '' : row.label + '：'}${row.value}`.slice(0, 80)}
                 {row.value.length > 80 ? '…' : ''}
