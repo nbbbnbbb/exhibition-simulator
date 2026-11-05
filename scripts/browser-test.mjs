@@ -3,7 +3,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import * as THREE from 'three';
 import { DEFAULT_BUILDING } from '../src/domain.js';
-import { placeOnPlan, waitProject } from './placement-test-helpers.mjs';
+import { addPartitionOnPlan, placeOnPlan, waitProject } from './placement-test-helpers.mjs';
 // Use the bundled Playwright when available; no browser download is needed on Windows.
 let playwright;
 try {
@@ -50,9 +50,15 @@ try {
   await page.reload({ waitUntil: 'networkidle' });
   await page.getByText('保存済み', { exact: false }).first().waitFor();
   await page.waitForFunction(() =>
-    document.querySelector('.plan-art[data-placement-id="p-1"] title')?.textContent.includes('6,250 mm'),
+    document
+      .querySelector('.plan-art[data-placement-id="p-1"] title')
+      ?.textContent.includes('6,250 mm'),
   );
-  await page.locator('.plan-art[data-placement-id="p-1"]').locator('line').last().click({ force: true });
+  await page
+    .locator('.plan-art[data-placement-id="p-1"]')
+    .locator('line')
+    .last()
+    .click({ force: true });
   await page.getByTestId('position-s').waitFor();
   await page.waitForFunction(
     () => document.querySelector('[data-testid=position-s]')?.value === '6250',
@@ -194,7 +200,7 @@ try {
   );
   // Add a 3,000 x 5,000 x 200 mm partition on a dotted rail and move it precisely.
   await page.getByRole('button', { name: /^可動壁 \d/ }).click();
-  await page.getByRole('button', { name: '＋ 可動壁を追加', exact: true }).click();
+  await addPartitionOnPlan(page);
   await page.getByTestId('partition-width').waitFor();
   assert(
     (await page.getByTestId('partition-width').inputValue()) === '3000',

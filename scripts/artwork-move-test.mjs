@@ -3,7 +3,12 @@ import fs from 'node:fs/promises';
 import { chromium } from 'playwright';
 import * as THREE from 'three';
 import { createProject, walls, positionOnWall } from '../src/domain.js';
-import { pointOnPlan, storedProject, waitProject } from './placement-test-helpers.mjs';
+import {
+  addPartitionOnPlan,
+  pointOnPlan,
+  storedProject,
+  waitProject,
+} from './placement-test-helpers.mjs';
 const browser = await chromium.launch({
   channel: process.env.PLAYWRIGHT_CHANNEL || 'chrome',
   headless: true,
@@ -45,14 +50,12 @@ const put = async (project) => {
 const activeP = (p) =>
   p.layouts.find((l) => l.id === p.activeLayoutId).placements.find((p) => p.id === 'p-1');
 const preview = () =>
-  page
-    .locator('.scene-host')
-    .evaluate((el) => ({
-      wallId: el.dataset.previewWall,
-      s: +el.dataset.previewS,
-      bottom: +el.dataset.previewBottom,
-      valid: el.dataset.previewValid === 'true',
-    }));
+  page.locator('.scene-host').evaluate((el) => ({
+    wallId: el.dataset.previewWall,
+    s: +el.dataset.previewS,
+    bottom: +el.dataset.previewBottom,
+    valid: el.dataset.previewValid === 'true',
+  }));
 const projectPoint = async (point, cam) => {
   const box = await page.locator('canvas').boundingBox();
   cam.aspect = box.width / box.height;
@@ -150,7 +153,7 @@ try {
   await waitProject(page, (p) => activeP(p).wallId === 'west');
   checks.push('plan wall-to-wall drag and one-step undo/redo');
   await page.getByRole('button', { name: /^可動壁 \d/ }).click();
-  await page.getByRole('button', { name: '＋ 可動壁を追加', exact: true }).click();
+  await addPartitionOnPlan(page);
   saved = await waitProject(page, (p) => p.layouts[0].partitions.length === 1);
   const part = saved.layouts[0].partitions[0],
     rail = saved.rails.find((r) => r.id === part.railId);

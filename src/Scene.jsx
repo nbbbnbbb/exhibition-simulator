@@ -6,6 +6,7 @@ import { LightingRig } from './LightingRig.js';
 import { ceilingStructure } from './architecture.js';
 import { pickWall, previewPlacement, previewMove } from './artworkPlacement.js';
 import { makeArtworkLabel } from './artworkLabels3D.js';
+import { pickPartitionRail, previewPartition } from './partitionPlacement.js';
 import { makeSteelFrame } from './SteelFrames3D.js';
 import { makeSteelLineFace } from './SteelLineFaces3D.js';
 import { detectSteelLineFaces } from './steelLineFaces.js';
@@ -47,6 +48,10 @@ export const Scene = forwardRef(function Scene(
     onSteelLinePreview,
     onSteelLinePoint,
     showRails,
+    placingPartition,
+    partitionPreview,
+    onPartitionPreview,
+    onPlacePartition,
     onSelectPartition,
     onPartitionMove,
     onSelect,
@@ -88,6 +93,10 @@ export const Scene = forwardRef(function Scene(
     onSteelLinePreview,
     onSteelLinePoint,
     showRails,
+    placingPartition,
+    partitionPreview,
+    onPartitionPreview,
+    onPlacePartition,
     onSelectPartition,
     onPartitionMove,
     onSelect,
@@ -349,10 +358,21 @@ export const Scene = forwardRef(function Scene(
     const ghostGroup = new THREE.Group();
     const previewGroup = new THREE.Group();
     const steelDraftGroup = new THREE.Group();
+    const partitionDraftGroup = new THREE.Group();
+    partitionDraftGroup.userData.editorOnly = true;
     steelDraftGroup.userData.editorOnly = true;
     previewGroup.userData.editorOnly = true;
     previewGroup.visible = false;
-    scene.add(world, ceiling, artGroup, ghostGroup, floorLines, previewGroup, steelDraftGroup);
+    scene.add(
+      world,
+      ceiling,
+      artGroup,
+      ghostGroup,
+      floorLines,
+      previewGroup,
+      steelDraftGroup,
+      partitionDraftGroup,
+    );
     const gridHelper = new THREE.GridHelper(160, 160, '#9daba3', '#c0c8c0');
     gridHelper.position.y = 0.006;
     gridHelper.material.transparent = true;
@@ -389,6 +409,7 @@ export const Scene = forwardRef(function Scene(
       ghostGroup,
       previewGroup,
       steelDraftGroup,
+      partitionDraftGroup,
       gridHelper,
       textures,
       loader,
@@ -497,6 +518,38 @@ export const Scene = forwardRef(function Scene(
       if (JSON.stringify(result) !== JSON.stringify(c.placementPreview)) c.onPreview?.(result);
       return result;
     }
+    function partitionPointer(ev) {
+      const c = current.current;
+      if (!c.placingPartition) return null;
+      cast(ev);
+      e.lastPartitionPointer = { clientX: ev.clientX, clientY: ev.clientY, altKey: ev.altKey };
+      const rect = renderer.domElement.getBoundingClientRect();
+      const floor = new THREE.Vector3();
+      let candidate = null;
+      if (ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), floor)) {
+        for (const rail of c.project.rails) {
+          const hit = pickPartitionRail([rail], { x: floor.x * 1000, z: floor.z * 1000 }, Infinity);
+          if (!hit) continue;
+          const g = partitionGeometry({ railId: hit.railId, s: hit.s }, c.project.rails);
+          const projected = new THREE.Vector3(m(g.x), 0, m(g.z)).project(camera);
+          const distance = Math.hypot(
+            ((projected.x - pointer.x) * rect.width) / 2,
+            ((projected.y - pointer.y) * rect.height) / 2,
+          );
+          if (
+            projected.z >= -1 &&
+            projected.z <= 1 &&
+            distance <= 16 &&
+            (!candidate || distance < candidate.distance)
+          )
+            candidate = { ...hit, distance };
+        }
+      }
+      const result = { ...previewPartition(c.project, candidate, ev.altKey), source: 'three' };
+      if (JSON.stringify(result) !== JSON.stringify(c.partitionPreview))
+        c.onPartitionPreview?.(result);
+      return result;
+    }
     function steelLinePointer(ev) {
       const c = current.current,
         tool = c.steelLineTool;
@@ -536,6 +589,8 @@ export const Scene = forwardRef(function Scene(
       if (e.lastSteelPointer && current.current.steelLineTool) steelLinePointer(e.lastSteelPointer);
     };
     const cameraChange = () => {
+      if (e.lastPartitionPointer && current.current.placingPartition)
+        partitionPointer(e.lastPartitionPointer);
       e.refreshSteelPreview();
       if (e.lastPointer && (current.current.placingArtworkId || drag?.type === 'artwork'))
         pointerPreview(e.lastPointer);
@@ -544,6 +599,15 @@ export const Scene = forwardRef(function Scene(
     function down(ev) {
       if (ev.button !== 0) return;
       const c = current.current;
+      if (c.placingPartition) {
+        ev.stopImmediatePropagation();
+        ev.preventDefault();
+        renderer.domElement.focus();
+        const preview = partitionPointer(ev);
+        if (preview?.valid) c.onPlacePartition?.(preview.partition);
+        else if (preview?.message) c.onNotice(preview.message);
+        return;
+      }
       if (c.steelLineTool) {
         ev.stopImmediatePropagation();
         ev.preventDefault();
@@ -683,6 +747,10 @@ export const Scene = forwardRef(function Scene(
       }
     }
     function move(ev) {
+      if (current.current.placingPartition) {
+        partitionPointer(ev);
+        return;
+      }
       if (current.current.steelLineTool) {
         steelLinePointer(ev);
         return;
@@ -799,6 +867,8 @@ export const Scene = forwardRef(function Scene(
       if (drag?.type === 'artwork' || drag?.type === 'steel') up();
     };
     function leave() {
+      e.lastPartitionPointer = null;
+      if (current.current.placingPartition) current.current.onPartitionPreview?.(null);
       e.lastSteelPointer = null;
       if (current.current.steelLineTool) current.current.onSteelLinePreview?.(null);
       e.lastPointer = null;
@@ -1474,10 +1544,53 @@ export const Scene = forwardRef(function Scene(
     const e = engine.current;
     if (!e) return;
     e.refreshSteelPreview?.();
-    e.renderer.domElement.style.cursor = steelLineTool ? 'crosshair' : '';
+    e.renderer.domElement.style.cursor = steelLineTool || placingPartition ? 'crosshair' : '';
     e.controls.mouseButtons.RIGHT = steelLineTool ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
     if (!steelLineTool) e.lastSteelPointer = null;
-  }, [steelLineTool, geometryKey]);
+    if (!placingPartition) e.lastPartitionPointer = null;
+  }, [steelLineTool, placingPartition, geometryKey]);
+  useEffect(() => {
+    const e = engine.current;
+    if (!e) return;
+    const group = e.partitionDraftGroup;
+    for (const child of [...group.children]) {
+      child.traverse((o) => {
+        o.geometry?.dispose();
+        o.material?.dispose();
+      });
+      group.remove(child);
+    }
+    const p = placingPartition && partitionPreview?.partition;
+    host.current.dataset.placingPartition = String(!!placingPartition);
+    host.current.dataset.partitionPreviewRail = p?.railId || '';
+    host.current.dataset.partitionPreviewS = String(p?.s ?? '');
+    host.current.dataset.partitionPreviewValid = String(!!p && partitionPreview.valid);
+    if (!p) return;
+    const g = partitionGeometry(p, project.rails);
+    const color = partitionPreview.valid ? '#468950' : '#d14935';
+    const geometry = new THREE.BoxGeometry(m(p.width), m(p.height), m(p.thickness));
+    const mesh = new THREE.Mesh(
+      geometry,
+      new THREE.MeshBasicMaterial({
+        color,
+        toneMapped: false,
+        transparent: true,
+        opacity: 0.3,
+        depthWrite: false,
+      }),
+    );
+    const edge = new THREE.LineSegments(
+      new THREE.EdgesGeometry(geometry),
+      new THREE.LineBasicMaterial({
+        color,
+        toneMapped: false,
+      }),
+    );
+    mesh.add(edge);
+    mesh.position.set(m(g.x), m(p.height / 2), m(g.z));
+    mesh.rotation.y = g.rotation;
+    group.add(mesh);
+  }, [placingPartition, partitionPreview, project.rails]);
   useEffect(() => {
     const e = engine.current;
     if (!e) return;

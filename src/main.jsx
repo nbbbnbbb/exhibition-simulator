@@ -36,6 +36,7 @@ import {
   mergeCatalog,
 } from './catalog.js';
 import { PartitionLibrary, PartitionInspector, RailEditor } from './Partitions.jsx';
+import { previewPartition } from './partitionPlacement.js';
 import {
   createProject,
   validateProject,
@@ -47,7 +48,6 @@ import {
   uid,
   format,
   fitPartition,
-  railGeometry,
 } from './domain.js';
 import { readProject, saveProject, readImage, download } from './storage.js';
 import {
@@ -244,6 +244,12 @@ function App() {
       }
     });
   const [selectedSteelFrame, setSelectedSteelFrame] = useState(null);
+  const [placingPartition, setPlacingPartition] = useState(false),
+    [partitionPreview, setPartitionPreview] = useState(null);
+  const cancelPartitionPlacement = useCallback(() => {
+    setPlacingPartition(false);
+    setPartitionPreview(null);
+  }, []);
   const [selectedSteelLineFace, setSelectedSteelLineFace] = useState(null);
   useEffect(() => {
     try {
@@ -274,6 +280,11 @@ function App() {
     [steelLineStart, setSteelLineStart] = useState(null),
     [steelLinePreview, setSteelLinePreview] = useState(null);
   const steelLineTool = drawingSteelLines ? { ...steelLineSettings, start: steelLineStart } : null;
+  useEffect(cancelPartitionPlacement, [project.activeLayoutId, modal, libraryTab]);
+  useEffect(() => {
+    if (mode !== 'orbit') cancelPartitionPlacement();
+  }, [mode]);
+  useEffect(() => setPartitionPreview(null), [view]);
   useEffect(() => {
     if (!steelSections(project).some((section) => section.id === steelLineSettings.sectionId))
       setSteelLineSettings((s) => ({ ...s, sectionId: 'c65' }));
@@ -401,25 +412,24 @@ function App() {
       }),
     [],
   );
-  const undo = useCallback(
-    () =>
-      setHistory((h) =>
-        h.past.length
-          ? { past: h.past.slice(0, -1), present: h.past.at(-1), future: [h.present, ...h.future] }
-          : h,
-      ),
-    [],
-  );
-  const redo = useCallback(
-    () =>
-      setHistory((h) =>
-        h.future.length
-          ? { past: [...h.past, h.present], present: h.future[0], future: h.future.slice(1) }
-          : h,
-      ),
-    [],
-  );
+  const undo = useCallback(() => {
+    cancelPartitionPlacement();
+    setHistory((h) =>
+      h.past.length
+        ? { past: h.past.slice(0, -1), present: h.past.at(-1), future: [h.present, ...h.future] }
+        : h,
+    );
+  }, []);
+  const redo = useCallback(() => {
+    cancelPartitionPlacement();
+    setHistory((h) =>
+      h.future.length
+        ? { past: [...h.past, h.present], present: h.future[0], future: h.future.slice(1) }
+        : h,
+    );
+  }, []);
   const select = useCallback((id, multi = false) => {
+    cancelPartitionPlacement();
     setSelectedSteelLineFace(null);
     cancelSteelLine();
     setSelectedSteelFrame(null);
@@ -429,6 +439,7 @@ function App() {
     );
   }, []);
   const selectPartition = useCallback((id) => {
+    cancelPartitionPlacement();
     setSelectedSteelLineFace(null);
     cancelSteelLine();
     setSelectedSteelFrame(null);
@@ -436,6 +447,7 @@ function App() {
     setSelectedPartition(id);
   }, []);
   const selectSteelFrame = useCallback((id) => {
+    cancelPartitionPlacement();
     setSelectedSteelLineFace(null);
     cancelSteelLine();
     cancelPlacement();
@@ -445,6 +457,7 @@ function App() {
     setInspectorTab('placement');
   }, []);
   const selectSteelLineFace = useCallback((id) => {
+    cancelPartitionPlacement();
     cancelSteelLine();
     cancelPlacement();
     setSelected([]);
@@ -474,6 +487,7 @@ function App() {
     [update],
   );
   function startSteelLines(fromFrame) {
+    cancelPartitionPlacement();
     setSelectedSteelLineFace(null);
     cancelPlacement();
     setView('three');
@@ -621,6 +635,7 @@ function App() {
         removeSteelFrame(selectedSteelFrame);
       }
       if (e.code === 'Escape') {
+        cancelPartitionPlacement();
         setSelectedSteelLineFace(null);
         cancelSteelLine();
         cancelPlacement();
@@ -638,6 +653,7 @@ function App() {
     return () => window.removeEventListener('keydown', key);
   }, [modal, selected, selectedSteelFrame, drawingSteelLines, undo, redo, remove]);
   function addArtwork(artworkId) {
+    cancelPartitionPlacement();
     cancelSteelLine();
     const art = project.artworks.find((a) => a.id === artworkId);
     const problem = placementProblem(art) || inventoryProblem(art, layout.placements);
@@ -683,28 +699,35 @@ function App() {
       tell(err.message);
     }
   }
-  function addPartition(railId) {
+  function startPartitionPlacement() {
+    cancelSteelLine();
+    cancelPlacement();
+    setSelected([]);
+    setSelectedPartition(null);
+    setSelectedSteelFrame(null);
+    setSelectedSteelLineFace(null);
+    setMode('orbit');
+    setPartitionPreview(null);
+    setPlacingPartition(true);
+    setNotice('');
+  }
+  function commitPartition(candidate) {
+    if (!placingPartition) return;
+    const result = previewPartition(project, candidate, true);
+    if (!result.valid) return tell(result.message);
     const id = uid();
     update((d) => {
-      const l = d.layouts.find((l) => l.id === d.activeLayoutId),
-        r = d.rails.find((r) => r.id === railId);
-      l.partitions.push(
-        fitPartition(
-          {
-            id,
-            name: `可動壁 ${String(l.partitions.length + 1).padStart(2, '0')}`,
-            railId,
-            s: Math.round(railGeometry(r).length / 2),
-            width: 3000,
-            height: 5000,
-            thickness: 200,
-          },
-          d.building,
-          d.rails,
-        ),
-      );
+      const l = d.layouts.find((l) => l.id === d.activeLayoutId);
+      const next = previewPartition(d, candidate, true);
+      if (!next.valid) throw new Error(next.message);
+      l.partitions.push({
+        ...next.partition,
+        id,
+        name: `可動壁 ${String(l.partitions.length + 1).padStart(2, '0')}`,
+      });
     });
     selectPartition(id);
+    tell('可動壁を配置しました');
   }
   const changePartition = useCallback(
     (id, changes) =>
@@ -1075,7 +1098,9 @@ function App() {
               rails={project.rails}
               selected={selectedPartition}
               onSelect={selectPartition}
-              onAdd={addPartition}
+              onAdd={startPartitionPlacement}
+              placing={placingPartition}
+              onCancel={cancelPartitionPlacement}
               onEditRails={() => setModal('rails')}
               showRails={showRails}
               onShowRails={setShowRails}
@@ -1318,7 +1343,11 @@ function App() {
                 steelLinePreview={steelLinePreview}
                 onSteelLinePreview={setSteelLinePreview}
                 onSteelLinePoint={commitSteelLinePoint}
-                showRails={showRails}
+                showRails={showRails || placingPartition}
+                placingPartition={placingPartition}
+                partitionPreview={partitionPreview}
+                onPartitionPreview={setPartitionPreview}
+                onPlacePartition={commitPartition}
                 onSelectPartition={selectPartition}
                 onPartitionMove={changePartition}
                 onSelect={select}
@@ -1417,7 +1446,11 @@ function App() {
                 selectedPartition={selectedPartition}
                 onSelectPartition={selectPartition}
                 onPartitionMove={changePartition}
-                showRails={showRails}
+                showRails={showRails || placingPartition}
+                placingPartition={placingPartition}
+                partitionPreview={partitionPreview}
+                onPartitionPreview={setPartitionPreview}
+                onPlacePartition={commitPartition}
                 selectedSteelFrame={selectedSteelFrame}
                 onSelectSteelFrame={selectSteelFrame}
                 onSteelFrameMove={changeSteelFrame}
@@ -1449,6 +1482,23 @@ function App() {
               </div>
             </section>
           </div>
+          {placingPartition && (
+            <div
+              className={`placement-banner partition-placement-banner ${partitionPreview?.valid === false ? 'invalid' : ''}`}
+              role="status"
+            >
+              <div>
+                <strong>可動壁を追加</strong>
+                <span>
+                  {partitionPreview?.message ||
+                    (partitionPreview?.partition
+                      ? `${project.rails.find((r) => r.id === partitionPreview.partition.railId)?.name} · 中心 ${format(partitionPreview.partition.s)} mm · クリックで確定`
+                      : '3Dまたは平面図の配置ラインを指してください。クリックで確定、Escで中止。')}
+                </span>
+              </div>
+              <Button onClick={cancelPartitionPlacement}>追加を中止</Button>
+            </div>
+          )}
           {placingArt && (
             <div
               className={`placement-banner ${placementPreview?.valid === false ? 'invalid' : ''}`}
