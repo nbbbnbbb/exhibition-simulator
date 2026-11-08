@@ -13,7 +13,8 @@ import {
 } from '../src/artworkPlacement.js';
 import { inventoryProblem, quantityLimit } from '../src/catalog.js';
 import { DEFAULT_LABELS, normalizeLabels, artworkLabelRows } from '../src/artworkLabels.js';
-import { makeArtworkLabel } from '../src/artworkLabels3D.js';
+import * as THREE from 'three';
+import { clearArtworkLabel, updateArtworkLabels } from '../src/artworkLabels3D.js';
 const candidate = (s = 16000, bottom = 1000, wallId = 'west') => ({
   id: crypto.randomUUID(),
   s,
@@ -337,85 +338,82 @@ test('作品上部の文字サイズ・行間・横幅・余白を保存し、�
   assert.deepEqual(validateProject(p).artworkLabels, DEFAULT_LABELS);
 });
 
-test('ラベルは壁端・天井際・可動壁の表裏でも作品の真上に置き、文字を拡大しても下端の余白を保つ', (t) => {
+test('上部ラベルは余白を保ち、オーバーレイは作品面を使って文字のテクスチャを共有する', (t) => {
+  let canvases = 0;
+  let fills = 0;
   const context = {
     font: '',
     measureText(text) {
       return { width: [...text].length * (parseFloat(this.font.replace('600 ', '')) || 35) };
     },
-    fillRect() {},
+    fillRect() {
+      fills++;
+    },
     strokeRect() {},
     fillText() {},
+    strokeText() {},
     scale() {},
   };
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'document');
   Object.defineProperty(globalThis, 'document', {
     configurable: true,
-    value: { createElement: () => ({ getContext: () => context }) },
+    value: {
+      createElement: () => {
+        canvases++;
+        return { getContext: () => context };
+      },
+    },
   });
   t.after(() => {
     if (descriptor) Object.defineProperty(globalThis, 'document', descriptor);
     else delete globalThis.document;
   });
-  const project = createProject(),
-    art = project.artworks[0];
-  const wall = walls(project.building).find((w) => w.id === 'west');
-  const first = makeArtworkLabel(art, { s: 0, bottom: wall.height - art.height }, wall, {
-    ...DEFAULT_LABELS,
-    fields: ['title', 'artist'],
-  });
-  const larger = makeArtworkLabel(art, { s: 0, bottom: wall.height - art.height }, wall, {
-    ...DEFAULT_LABELS,
-    fields: ['title', 'artist'],
-    fontSize: 32,
-    gap: 200,
-  });
-  assert.equal(first.position.x, 0);
-  assert.ok(
-    Math.abs(first.position.y - first.geometry.parameters.height / 2 - art.height / 2000 - 0.09) <
-      1e-9,
-  );
-  assert.ok(larger.geometry.parameters.height > first.geometry.parameters.height);
-  assert.ok(
-    Math.abs(larger.position.y - larger.geometry.parameters.height / 2 - art.height / 2000 - 0.2) <
-      1e-9,
-  );
-  for (const normal of [
-    { x: 0, z: 1 },
-    { x: 0, z: -1 },
-  ]) {
-    const card = makeArtworkLabel(
-      art,
-      { s: wall.length, bottom: 0 },
-      { ...wall, normal },
-      { ...DEFAULT_LABELS, width: 1000 },
+  const art = createProject().artworks[0];
+  const surfaces = new Map();
+  for (const id of ['first', 'second']) {
+    const material = new THREE.MeshStandardMaterial();
+    const image = new THREE.Mesh(
+      new THREE.PlaneGeometry(art.width / 1000, art.height / 1000),
+      material,
     );
-    assert.equal(card.position.x, 0);
-    assert.equal(card.geometry.parameters.width, 1);
-    assert.ok(card.position.y > art.height / 2000);
-    card.geometry.dispose();
-    card.material.map.dispose();
-    card.material.dispose();
+    const group = new THREE.Group().add(image);
+    surfaces.set(id, { art, group, image, material, wallLength: 3000 });
   }
-  const overlay = makeArtworkLabel(art, { s: 0, bottom: 1000 }, wall, {
-    ...DEFAULT_LABELS,
-    position: 'overlay',
-    fontSize: 24,
-    gap: 1000,
+  const textures = new Map();
+  const settings = { ...DEFAULT_LABELS, enabled: true, fields: ['title', 'artist'] };
+  assert.equal(updateArtworkLabels(surfaces, textures, settings), 2);
+  const first = surfaces.get('first');
+  const smallHeight = first.card.geometry.parameters.height;
+  assert.equal(first.card.material.map, surfaces.get('second').card.material.map);
+  assert.equal(canvases, 1);
+  assert.equal(first.card.position.x, 0);
+  assert.ok(Math.abs(first.card.position.y - smallHeight / 2 - art.height / 2000 - 0.09) < 1e-9);
+  updateArtworkLabels(surfaces, textures, { ...settings, fontSize: 32, gap: 200 });
+  const { height: largeHeight } = first.card.geometry.parameters;
+  assert.ok(largeHeight > smallHeight);
+  assert.ok(Math.abs(first.card.position.y - largeHeight / 2 - art.height / 2000 - 0.2) < 1e-9);
+  const overlay = { ...settings, position: 'overlay', fontSize: 24, gap: 1000 };
+  const backgroundFills = fills;
+  updateArtworkLabels(surfaces, textures, overlay);
+  assert.equal(fills, backgroundFills);
+  assert.deepEqual(first.group.children, [first.image]);
+  assert.notEqual(first.image.material, first.material);
+  assert.equal(first.image.material.transparent, false);
+  assert.equal(first.image.material.depthWrite, true);
+  assert.equal(first.label, surfaces.get('second').label);
+  assert.equal(canvases, 3);
+  assert.equal(textures.size, 1);
+
+  updateArtworkLabels(surfaces, textures, { ...overlay, enabled: false });
+  assert.equal(first.image.material, first.material);
+  updateArtworkLabels(surfaces, textures, overlay);
+  assert.equal(canvases, 3, 're-enabling reuses the same glyphs');
+  surfaces.forEach((surface) => {
+    clearArtworkLabel(surface);
+    surface.image.geometry.dispose();
+    surface.material.dispose();
   });
-  assert.equal(overlay.position.x, 0);
-  assert.equal(overlay.position.y, 0);
-  assert.ok(overlay.position.z > art.depth / 2000);
-  assert.equal(overlay.material.transparent, true);
-  assert.ok(overlay.material.opacity < 1);
-  overlay.geometry.dispose();
-  overlay.material.map.dispose();
-  overlay.material.dispose();
-  for (const card of [first, larger]) {
-    card.geometry.dispose();
-    card.material.map.dispose();
-    card.material.dispose();
-  }
+  textures.forEach((label) => label.map.dispose());
 });
 
 test('作品に重ねる表示位置もJSONに保存し、旧ラベルは作品の上を初期値にする', () => {
