@@ -55,7 +55,7 @@ export default function ArtworkLabelOptions({
       <p className="field-note">文字サイズ・行間は3Dと平面図に反映されます。</p>
       {settings.position === 'overlay' && (
         <p className="field-note">
-          作品の中央に重ねて表示します。「作品との余白」は作品の上に表示する場合に使います。
+          作品面の中央に文字だけを重ねます。「作品との余白」は作品の上に表示するときに使います。
         </p>
       )}
       <div className="label-presets">

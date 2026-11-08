@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { LightingRig } from './LightingRig.js';
 import { ceilingStructure, glazingFrames } from './architecture.js';
 import {
@@ -11,7 +12,7 @@ import {
   artworkBatchDimensions,
   previewMove,
 } from './artworkPlacement.js';
-import { makeArtworkLabel } from './artworkLabels3D.js';
+import { clearArtworkLabel, updateArtworkLabels } from './artworkLabels3D.js';
 import { pickContextObject } from './objectPicking.js';
 import { makeSceneObject } from './SceneObjects3D.js';
 import { validateSceneObject, objectFootprint } from './sceneObjects.js';
@@ -43,6 +44,33 @@ import {
 } from './domain.js';
 
 const m = (n) => n / 1000;
+
+function artworkFrameGeometry(width, height, depth, faceWidth, faceHeight) {
+  // Leave an opening in the front so the image and the frame never share a depth sample.
+  const box = new THREE.BoxGeometry(width, height, depth);
+  const front = box.groups[4]; // BoxGeometry's +Z face
+  const indices = Array.from(box.index.array);
+  indices.splice(front.start, front.count);
+  box.setIndex(indices);
+  box.clearGroups();
+
+  function rectangle(path, w, h) {
+    path.moveTo(-w / 2, -h / 2);
+    path.lineTo(w / 2, -h / 2);
+    path.lineTo(w / 2, h / 2);
+    path.lineTo(-w / 2, h / 2);
+    path.closePath();
+    return path;
+  }
+  const outline = rectangle(new THREE.Shape(), width, height);
+  outline.holes.push(rectangle(new THREE.Path(), faceWidth, faceHeight));
+  const border = new THREE.ShapeGeometry(outline).translate(0, 0, depth / 2);
+  const frame = mergeGeometries([box, border]);
+  box.dispose();
+  border.dispose();
+  return frame;
+}
+
 export const Scene = forwardRef(function Scene(
   {
     project,
@@ -161,10 +189,17 @@ export const Scene = forwardRef(function Scene(
         compare?.steelFrames,
         project.layouts.find((l) => l.id === project.activeLayoutId)?.steelLineMembranes,
         compare?.steelLineMembranes,
-        labelSettings,
       ]),
-    [project, compare, labelSettings],
+    [project, compare],
   );
+  const labelKey = JSON.stringify(labelSettings);
+  const geometryDependencies = [
+    geometryKey,
+    selectedPartition,
+    selectedSteelFrame,
+    selectedSteelLineFace,
+    selectedSceneObject,
+  ];
   useImperativeHandle(ref, () => ({
     fit() {
       engine.current?.fit();
@@ -294,7 +329,12 @@ export const Scene = forwardRef(function Scene(
       try {
         const group = new THREE.Group();
         group.name = 'MA exhibition (metres)';
-        group.add(e.world.clone(true), e.artGroup.clone(true));
+        const artworks = e.artGroup.clone(true);
+        artworks.traverse((mesh) => {
+          const surface = e.artworkSurfaces.get(mesh.userData.placementId);
+          if (surface && mesh.geometry === surface.image.geometry) mesh.material = surface.material;
+        });
+        group.add(e.world.clone(true), artworks);
         const fixtures = new THREE.Group();
         fixtures.name = 'Ceiling light fixtures (estimated)';
         e.lightingRig.group.children
@@ -504,6 +544,8 @@ export const Scene = forwardRef(function Scene(
     let last = performance.now();
     let walkMode = false;
     let lastCamera = 0;
+    const cameraPosition = new THREE.Vector3();
+    let lastCameraX, lastCameraZ;
     let xrLastTurn = 0;
     const e = {
       renderer,
@@ -520,6 +562,8 @@ export const Scene = forwardRef(function Scene(
       floorLines,
       ceiling,
       artGroup,
+      artworkSurfaces: new Map(),
+      artworkLabelTextures: new Map(),
       ghostGroup,
       previewGroup,
       steelDraftGroup,
@@ -1469,11 +1513,18 @@ export const Scene = forwardRef(function Scene(
         walkMode = c.mode === 'walk';
       }
       renderer.render(scene, camera);
-      if (time - lastCamera > 250) {
+      if (c.mode === 'walk' && time - lastCamera > 250) {
         lastCamera = time;
-        const pos = new THREE.Vector3();
-        (renderer.xr.isPresenting ? renderer.xr.getCamera() : camera).getWorldPosition(pos);
-        c.onCamera?.({ x: Math.round(pos.x * 1000), z: Math.round(pos.z * 1000) });
+        (renderer.xr.isPresenting ? renderer.xr.getCamera() : camera).getWorldPosition(
+          cameraPosition,
+        );
+        const x = Math.round(cameraPosition.x * 1000);
+        const z = Math.round(cameraPosition.z * 1000);
+        if (x !== lastCameraX || z !== lastCameraZ) {
+          lastCameraX = x;
+          lastCameraZ = z;
+          c.onCamera?.({ x, z });
+        }
       }
     });
     return () => {
@@ -1494,6 +1545,8 @@ export const Scene = forwardRef(function Scene(
       scene.remove(planeHandles);
       planeControls.dispose();
       e.lightingRig.dispose();
+      e.artworkSurfaces.forEach(clearArtworkLabel);
+      e.artworkLabelTextures.forEach((label) => label.map.dispose());
       scene.traverse((o) => {
         o.geometry?.dispose();
         if (o.material) {
@@ -1536,6 +1589,8 @@ export const Scene = forwardRef(function Scene(
     clear(e.world);
     clear(e.floorLines);
     clear(e.ceiling);
+    e.artworkSurfaces.forEach(clearArtworkLabel);
+    e.artworkSurfaces.clear();
     clear(e.artGroup);
     clear(e.ghostGroup);
     const used = new Set(project.artworks.map((a) => a.image));
@@ -1827,7 +1882,6 @@ export const Scene = forwardRef(function Scene(
       g.position.set(m(pos.x), m(pos.y), m(pos.z));
       g.rotation.y = pos.rotation;
       g.userData.placementId = p.id;
-      g.visible = ghost || !movingPlacementIds.includes(p.id);
       if (ghost) {
         const edges = new THREE.LineSegments(
           new THREE.EdgesGeometry(new THREE.BoxGeometry(m(a.width), m(a.height), m(a.depth))),
@@ -1837,8 +1891,14 @@ export const Scene = forwardRef(function Scene(
         e.ghostGroup.add(g);
         return;
       }
+      const width = m(a.width);
+      const height = m(a.height);
+      const depth = m(a.depth);
+      const inset = Math.min(0.004, width / 4, height / 4);
+      const faceWidth = width - 2 * inset;
+      const faceHeight = height - 2 * inset;
       const frame = new THREE.Mesh(
-        new THREE.BoxGeometry(m(a.width), m(a.height), m(a.depth)),
+        artworkFrameGeometry(width, height, depth, faceWidth, faceHeight),
         material('#514b3e'),
       );
       frame.userData.placementId = p.id;
@@ -1852,53 +1912,71 @@ export const Scene = forwardRef(function Scene(
         e.textures.set(a.image, tex);
       }
       const image = new THREE.Mesh(
-        new THREE.PlaneGeometry(m(a.width - 8), m(a.height - 8)),
+        new THREE.PlaneGeometry(faceWidth, faceHeight),
         new THREE.MeshStandardMaterial({
           map: tex || null,
           color: a.image ? '#ffffff' : '#eee9de',
           roughness: 0.95,
           metalness: 0,
-          polygonOffset: true,
-          polygonOffsetFactor: -1,
-          polygonOffsetUnits: -2,
         }),
       );
-      image.position.z = m(a.depth / 2) + 0.001;
+      image.position.z = depth / 2;
       image.userData.placementId = p.id;
       image.receiveShadow = true;
       g.add(image);
-      if (labelSettings?.enabled) {
-        const label = makeArtworkLabel(a, p, w, labelSettings);
-        if (label) g.add(label);
-      }
-      if (selected.includes(p.id)) {
-        const edge = new THREE.LineSegments(
-          new THREE.EdgesGeometry(
-            new THREE.BoxGeometry(m(a.width + 30), m(a.height + 30), m(a.depth + 8)),
-          ),
-          new THREE.LineBasicMaterial({ color: '#b68241' }),
-        );
-        edge.userData.editorOnly = true;
-        g.add(edge);
-      }
+      e.artworkSurfaces.set(p.id, {
+        art: a,
+        group: g,
+        image,
+        material: image.material,
+        wallLength: w.length,
+      });
       e.artGroup.add(g);
     }
     layout.placements.forEach((p) => artMesh(p));
     const compareWalls = compare ? walls(b, compare.partitions, project.rails) : [];
     compare?.placements.forEach((p) => artMesh(p, true, compareWalls));
-    if (host.current)
-      host.current.dataset.artworkLabelCount = String(
-        e.artGroup.children.filter((g) => g.children.some((o) => o.userData.artworkLabel)).length,
-      );
-  }, [
-    geometryKey,
-    selected,
-    selectedPartition,
-    selectedSteelFrame,
-    selectedSteelLineFace,
-    movingPlacementIds,
-    selectedSceneObject,
-  ]);
+  }, geometryDependencies);
+  useEffect(() => {
+    const e = engine.current;
+    if (!e) return;
+    const selection = new Set(selected);
+    const moving = new Set(movingPlacementIds);
+    for (const [id, surface] of e.artworkSurfaces) {
+      const { art, group, edge } = surface;
+      const visible = !moving.has(id);
+      if (group.visible !== visible) {
+        group.visible = visible;
+        e.renderer.shadowMap.needsUpdate = true;
+      }
+      if (edge && !selection.has(id)) {
+        edge.removeFromParent();
+        edge.geometry.dispose();
+        edge.material.dispose();
+        surface.edge = null;
+      } else if (!edge && selection.has(id)) {
+        const outline = new THREE.BoxGeometry(
+          m(art.width + 30),
+          m(art.height + 30),
+          m(art.depth + 8),
+        );
+        const edge = new THREE.LineSegments(
+          new THREE.EdgesGeometry(outline),
+          new THREE.LineBasicMaterial({ color: '#b68241' }),
+        );
+        outline.dispose();
+        edge.userData.editorOnly = true;
+        surface.edge = edge;
+        group.add(edge);
+      }
+    }
+  }, [...geometryDependencies, selected, movingPlacementIds]);
+  useEffect(() => {
+    const e = engine.current;
+    if (!e) return;
+    const count = updateArtworkLabels(e.artworkSurfaces, e.artworkLabelTextures, labelSettings);
+    if (host.current) host.current.dataset.artworkLabelCount = String(count);
+  }, [...geometryDependencies, labelKey]);
   useEffect(() => {
     const e = engine.current;
     if (!e) return;

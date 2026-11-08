@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useMemo } from 'react';
 import { walls, polygon, format, fitPartition, partitionGeometry } from './domain.js';
 import {
   previewArtworkAddition,
@@ -53,6 +53,10 @@ export default function Plan({
   const svg = useRef();
   const drag = useRef();
   const steelDrag = useRef();
+  const labelRowsByArtwork = useMemo(() => {
+    if (mini || !labelSettings?.enabled) return null;
+    return new Map(project.artworks.map((art) => [art.id, artworkLabelRows(art, labelSettings)]));
+  }, [mini, labelSettings, project.artworks]);
   const b = project.building,
     layout = project.layouts.find((l) => l.id === project.activeLayoutId),
     ws = walls(b, layout.partitions, project.rails);
@@ -385,7 +389,7 @@ export default function Plan({
       pz = w.start.z + w.tangent.z * p.s;
     const thick = mini ? 380 : 210;
     const selectedArt = selected.includes(p.id);
-    const labelRows = labelSettings?.enabled ? artworkLabelRows(a, labelSettings) : [];
+    const labelRows = ghost ? null : labelRowsByArtwork?.get(a.id);
     const labelFontSize = (330 * (labelSettings?.fontSize || 16)) / 16;
     const labelLineHeight = (labelFontSize * (labelSettings?.lineHeight || 150)) / 100;
     const aboveY =
@@ -395,13 +399,13 @@ export default function Plan({
       thick / 2 -
       (labelSettings?.gap ?? 90) -
       labelFontSize * 0.3 -
-      (labelRows.length - 1) * labelLineHeight;
+      ((labelRows?.length ?? 0) - 1) * labelLineHeight;
     const labelY =
       labelSettings?.position === 'overlay'
         ? pz +
           (w.normal.z * thick) / 2 +
           labelFontSize * 0.35 -
-          ((labelRows.length - 1) * labelLineHeight) / 2
+          (((labelRows?.length ?? 0) - 1) * labelLineHeight) / 2
         : aboveY;
     return (
       <g
@@ -448,7 +452,7 @@ export default function Plan({
             </title>
           </line>
         )}
-        {!ghost && !mini && labelRows.length > 0 && (
+        {labelRows?.length > 0 && (
           <text
             className="plan-artwork-label"
             data-artwork-label={p.id}
