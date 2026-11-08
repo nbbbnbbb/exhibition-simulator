@@ -13,6 +13,7 @@ import {
   previewMove,
 } from './artworkPlacement.js';
 import { clearArtworkLabel, updateArtworkLabels } from './artworkLabels3D.js';
+import { createArtworkOverlayPreview } from './artworkOverlayPreview.js';
 import { pickContextObject } from './objectPicking.js';
 import { makeSceneObject } from './SceneObjects3D.js';
 import { validateSceneObject, objectFootprint } from './sceneObjects.js';
@@ -366,9 +367,10 @@ export const Scene = forwardRef(function Scene(
       const e = engine.current;
       if (!e) return;
       e.renderer.render(e.scene, e.camera);
+      e.drawArtworkOverlay();
       const a = document.createElement('a');
       a.download = 'MA-view.png';
-      a.href = e.renderer.domElement.toDataURL('image/png');
+      a.href = e.artworkOverlayPreview.composite(e.renderer.domElement).toDataURL('image/png');
       a.click();
     },
     async enterVR() {
@@ -465,6 +467,13 @@ export const Scene = forwardRef(function Scene(
     floorLines.userData.editorOnly = true;
     const ceiling = new THREE.Group();
     const artGroup = new THREE.Group();
+    const artworkSurfaces = new Map();
+    const artworkOverlayPreview = createArtworkOverlayPreview(
+      host.current,
+      camera,
+      artworkSurfaces,
+      [world, ceiling, artGroup],
+    );
     const ghostGroup = new THREE.Group();
     const previewGroup = new THREE.Group();
     const steelDraftGroup = new THREE.Group();
@@ -562,8 +571,17 @@ export const Scene = forwardRef(function Scene(
       floorLines,
       ceiling,
       artGroup,
-      artworkSurfaces: new Map(),
+      artworkSurfaces,
       artworkLabelTextures: new Map(),
+      artworkOverlayPreview,
+      drawArtworkOverlay() {
+        const c = current.current;
+        artworkOverlayPreview.draw(
+          renderer.xr.isPresenting ? null : c.labelSettings,
+          c.selected,
+          !!drag,
+        );
+      },
       ghostGroup,
       previewGroup,
       steelDraftGroup,
@@ -713,6 +731,7 @@ export const Scene = forwardRef(function Scene(
     e.fit();
     const resize = new ResizeObserver(() => {
       const r = host.current?.getBoundingClientRect();
+      if (r) artworkOverlayPreview.resize(r.width, r.height);
       if (!r || !r.width || !r.height) return;
       renderer.setSize(r.width, r.height);
       camera.aspect = r.width / r.height;
@@ -1206,6 +1225,7 @@ export const Scene = forwardRef(function Scene(
         const d = drag;
         if (d.type === 'artwork' && d.started && ev?.type === 'pointerup') pointerPreview(ev);
         drag = null;
+        artworkOverlayPreview.invalidate();
         controls.enabled = true;
         if (d.type === 'workplane') {
           if (ev?.type !== 'pointerup') {
@@ -1370,7 +1390,9 @@ export const Scene = forwardRef(function Scene(
       ceiling.visible = true;
       const roof = ceiling.children[0];
       if (roof) {
-        roof.material.colorWrite = c.mode === 'walk' || renderer.xr.isPresenting || !c.cutawayRoof;
+        const showRoof = c.mode === 'walk' || renderer.xr.isPresenting || !c.cutawayRoof;
+        if (roof.material.colorWrite !== showRoof) artworkOverlayPreview.invalidate();
+        roof.material.colorWrite = showRoof;
         roof.material.depthWrite = roof.material.colorWrite;
       }
       if (host.current) {
@@ -1384,8 +1406,10 @@ export const Scene = forwardRef(function Scene(
       if (
         e.beamsGroup?.visible !== c.displaySettings.beams ||
         e.mezzanineGroup?.visible !== c.displaySettings.mezzanine
-      )
+      ) {
         renderer.shadowMap.needsUpdate = true;
+        artworkOverlayPreview.invalidate();
+      }
       if (e.beamsGroup) e.beamsGroup.visible = c.displaySettings.beams;
       if (e.mezzanineGroup) e.mezzanineGroup.visible = c.displaySettings.mezzanine;
       e.lightingRig.setFixturesVisible(c.displaySettings.lightingRails);
@@ -1513,6 +1537,7 @@ export const Scene = forwardRef(function Scene(
         walkMode = c.mode === 'walk';
       }
       renderer.render(scene, camera);
+      e.drawArtworkOverlay();
       if (c.mode === 'walk' && time - lastCamera > 250) {
         lastCamera = time;
         (renderer.xr.isPresenting ? renderer.xr.getCamera() : camera).getWorldPosition(
@@ -1545,6 +1570,7 @@ export const Scene = forwardRef(function Scene(
       scene.remove(planeHandles);
       planeControls.dispose();
       e.lightingRig.dispose();
+      artworkOverlayPreview.dispose();
       e.artworkSurfaces.forEach(clearArtworkLabel);
       e.artworkLabelTextures.forEach((label) => label.map.dispose());
       scene.traverse((o) => {
@@ -1970,11 +1996,13 @@ export const Scene = forwardRef(function Scene(
         group.add(edge);
       }
     }
+    e.artworkOverlayPreview.invalidate();
   }, [...geometryDependencies, selected, movingPlacementIds]);
   useEffect(() => {
     const e = engine.current;
     if (!e) return;
     const count = updateArtworkLabels(e.artworkSurfaces, e.artworkLabelTextures, labelSettings);
+    e.artworkOverlayPreview.invalidate();
     if (host.current) host.current.dataset.artworkLabelCount = String(count);
   }, [...geometryDependencies, labelKey]);
   useEffect(() => {

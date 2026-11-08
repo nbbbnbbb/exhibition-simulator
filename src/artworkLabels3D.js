@@ -7,7 +7,7 @@ function makeLabelTexture(rows, width, settings) {
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
   const overlay = settings.position === 'overlay';
-  const scale = (settings.fontSize / 16) * (650 / width);
+  const scale = (settings.fontSize / 16) * (650 / width) * (overlay ? 2.4 : 1);
   const font = (title) =>
     `${title ? '600 ' : ''}${(title ? 43 : 35) * scale}px "Yu Gothic", sans-serif`;
   const lineHeight = (title) => ((title ? 43 : 35) * scale * settings.lineHeight) / 100;
@@ -63,11 +63,14 @@ function makeLabelTexture(rows, width, settings) {
   }
   const map = new THREE.CanvasTexture(canvas);
   map.colorSpace = THREE.SRGBColorSpace;
+  const summary = rows.find((row) => row.key === 'title') ?? rows[0];
   return {
     map,
     width: width / 1000,
     height: (width * textureHeight) / canvasWidth / 1000,
     overlay,
+    textHeight: (35 * scale * width) / canvasWidth / 1000,
+    summary: summary.value.replace(/\s+/g, ' ').trim(),
   };
 }
 
@@ -95,10 +98,12 @@ export function makeArtworkOverlay(baseMaterial, label, faceWidth, faceHeight) {
     faceHeight / (label.height * fit),
   );
   const material = baseMaterial.clone();
+  const visible = { value: true };
   material.customProgramCacheKey = () => 'ma-artwork-overlay';
   material.onBeforeCompile = (shader) => {
     shader.uniforms.maArtworkText = { value: label.map };
     shader.uniforms.maArtworkTextScale = { value: uvScale };
+    shader.uniforms.maArtworkTextVisible = visible;
     shader.vertexShader = `varying vec2 vMaArtworkUv;\n${shader.vertexShader}`.replace(
       '#include <uv_vertex>',
       '#include <uv_vertex>\nvMaArtworkUv = uv;',
@@ -107,18 +112,19 @@ export function makeArtworkOverlay(baseMaterial, label, faceWidth, faceHeight) {
       varying vec2 vMaArtworkUv;
       uniform sampler2D maArtworkText;
       uniform vec2 maArtworkTextScale;
+      uniform bool maArtworkTextVisible;
       ${shader.fragmentShader}
     `.replace(
       '#include <tonemapping_fragment>',
       `#include <tonemapping_fragment>
       vec2 labelUv = (vMaArtworkUv - 0.5) * maArtworkTextScale + 0.5;
-      if (all(greaterThanEqual(labelUv, vec2(0.0))) && all(lessThanEqual(labelUv, vec2(1.0)))) {
+      if (maArtworkTextVisible && all(greaterThanEqual(labelUv, vec2(0.0))) && all(lessThanEqual(labelUv, vec2(1.0)))) {
         vec4 textColor = texture2D(maArtworkText, labelUv);
         gl_FragColor.rgb = mix(gl_FragColor.rgb, textColor.rgb, textColor.a);
       }`,
     );
   };
-  return material;
+  return { material, visible, textHeight: label.textHeight * fit };
 }
 
 export function clearArtworkLabel(surface) {
@@ -134,6 +140,7 @@ export function clearArtworkLabel(surface) {
     image.material = material;
   }
   surface.label = null;
+  surface.overlay = null;
 }
 
 export function updateArtworkLabels(surfaces, textures, settings) {
@@ -173,9 +180,10 @@ export function updateArtworkLabels(surfaces, textures, settings) {
     if (surface.label !== label) {
       clearArtworkLabel(surface);
       surface.label = label;
-      if (label.overlay)
-        image.material = makeArtworkOverlay(material, label, faceWidth, faceHeight);
-      else {
+      if (label.overlay) {
+        surface.overlay = makeArtworkOverlay(material, label, faceWidth, faceHeight);
+        image.material = surface.overlay.material;
+      } else {
         surface.card = makeArtworkLabelCard(label);
         group.add(surface.card);
       }

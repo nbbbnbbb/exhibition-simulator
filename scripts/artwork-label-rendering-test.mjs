@@ -52,7 +52,7 @@ await page.addInitScript(() => {
   const ctx = CanvasRenderingContext2D.prototype;
   const strokeText = ctx.strokeText;
   ctx.strokeText = function (...args) {
-    stats.textures.add(this.canvas);
+    if (!this.canvas.classList.contains('artwork-overlay-preview')) stats.textures.add(this.canvas);
     return strokeText.apply(this, args);
   };
 });
@@ -129,6 +129,46 @@ try {
     withText.equals(await canvas.screenshot()),
     'a stationary artwork should render consistently',
   );
+  await button('全体を表示').click();
+  const overview = page.getByTestId('artwork-overlay-preview');
+  await overview.waitFor();
+  const overviewInk = await overview.evaluate((canvas) => {
+    const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+    let ink = 0;
+    for (let i = 3; i < pixels.length; i += 4) if (pixels[i]) ink++;
+    return ink;
+  });
+  assert.ok(overviewInk > 100, 'distant artwork needs legible glyphs at fit view');
+  await page.locator('.scene-host').screenshot({ path: `${output}/overlay-overview.png` });
+
+  await button('並べる').click();
+  const planLabel = page.locator('.plan-panel [data-artwork-label="p-1"]');
+  const planTypography = () =>
+    planLabel.evaluate((el) => ({
+      fontSize: getComputedStyle(el).fontSize,
+      y: el.getAttribute('y'),
+      lineOffsets: [...el.querySelectorAll('tspan')].map((line) => line.getAttribute('dy')),
+    }));
+  const planBefore = await planTypography();
+  await button('表示項目').click();
+  const fontSize = page.getByRole('spinbutton', { name: '文字サイズ（3D）', exact: true });
+  await fontSize.fill('24');
+  await fontSize.press('Enter');
+  await page
+    .getByRole('dialog')
+    .getByRole('button', { name: '閉じる', exact: true })
+    .first()
+    .click();
+  await waitProject(page, (project) => project.artworkLabels.fontSize === 24);
+  await page.waitForFunction(() =>
+    document.querySelector('.artwork-overlay-preview')?.getContext('2d').font.includes('24px'),
+  );
+  assert.equal(planBefore.fontSize, '330px');
+  assert.deepEqual(
+    await planTypography(),
+    planBefore,
+    '3D font size must not change plan typography',
+  );
   await page.getByRole('button', { name: /^プラン \d/ }).click();
   const downloading = page.waitForEvent('download');
   await button('現在の空間をGLB保存').click();
@@ -183,7 +223,16 @@ try {
     'selection must not rasterize labels',
   );
   assert.deepEqual(errors, []);
-  const report = { url, works: 48, offDraws, onDraws, labelTextures: 1, glyphCoverage: coverage };
+  const report = {
+    url,
+    works: 48,
+    offDraws,
+    onDraws,
+    labelTextures: 1,
+    glyphCoverage: coverage,
+    overviewInk,
+    planFontSize: planBefore.fontSize,
+  };
   await fs.writeFile(`${output}/report.json`, JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report));
 } catch (error) {

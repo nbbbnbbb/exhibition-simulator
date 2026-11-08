@@ -202,7 +202,7 @@ try {
   await page.getByRole('checkbox', { name: '作品情報ラベルを有効にする', exact: true }).check();
   await page.getByRole('checkbox', { name: '表示項目 制作年', exact: true }).uncheck();
   for (const [name, value] of [
-    ['文字サイズ', 24],
+    ['文字サイズ（3D）', 24],
     ['行間', 180],
     ['ラベルの横幅', 900],
     ['作品との余白', 160],
@@ -233,7 +233,7 @@ try {
   await page.getByRole('button', { name: '並べる', exact: true }).click();
   const label = page.locator('.plan-panel [data-artwork-label="p-1"]');
   await label.waitFor();
-  assert.equal(await label.evaluate((el) => getComputedStyle(el).fontSize), '495px');
+  assert.equal(await label.evaluate((el) => getComputedStyle(el).fontSize), '330px');
   const position = await label.evaluate((el) => ({
     x: Number(el.getAttribute('x')),
     y: el.getBBox().y + el.getBBox().height,
@@ -312,7 +312,7 @@ try {
     'overlay',
   );
   assert.equal(
-    await page.getByRole('spinbutton', { name: '文字サイズ', exact: true }).inputValue(),
+    await page.getByRole('spinbutton', { name: '文字サイズ（3D）', exact: true }).inputValue(),
     '24',
   );
   await close(page);
