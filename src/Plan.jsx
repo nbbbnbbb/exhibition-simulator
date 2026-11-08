@@ -390,7 +390,7 @@ export default function Plan({
     const thick = mini ? 380 : 210;
     const selectedArt = selected.includes(p.id);
     const labelRows = ghost ? null : labelRowsByArtwork?.get(a.id);
-    const labelFontSize = (330 * (labelSettings?.fontSize || 16)) / 16;
+    const labelFontSize = 330;
     const labelLineHeight = (labelFontSize * (labelSettings?.lineHeight || 150)) / 100;
     const aboveY =
       pz +

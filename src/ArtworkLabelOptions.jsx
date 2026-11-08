@@ -36,7 +36,7 @@ export default function ArtworkLabelOptions({
       </label>
       <div className="label-style-fields">
         {[
-          ['fontSize', '文字サイズ', 'px'],
+          ['fontSize', '文字サイズ（3D）', 'px'],
           ['lineHeight', '行間', '%'],
           ['width', 'ラベルの横幅', 'mm'],
           ['gap', '作品との余白', 'mm'],
@@ -52,10 +52,10 @@ export default function ArtworkLabelOptions({
           />
         ))}
       </div>
-      <p className="field-note">文字サイズ・行間は3Dと平面図に反映されます。</p>
+      <p className="field-note">文字サイズは3Dだけ、行間は3Dと平面図に反映されます。</p>
       {settings.position === 'overlay' && (
         <p className="field-note">
-          作品面の中央に文字だけを重ねます。「作品との余白」は作品の上に表示するときに使います。
+          作品面に文字だけを重ねます。遠くの作品は、選んだ項目から一行を表示します。「作品との余白」は作品の上に表示するときに使います。
         </p>
       )}
       <div className="label-presets">
